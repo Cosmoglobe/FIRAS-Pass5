@@ -2013,6 +2013,8 @@ contains
        !allreduce
        call mpi_allreduce(MPI_IN_PLACE, sum_theta, c_lnL%npixreg(p,id)+1, MPI_DOUBLE_PRECISION, MPI_SUM, info_fr%comm, ierr)
 
+       c_lnL%theta_pixreg(0,p,id)=c_lnL%p_gauss(1,id) ! pixregs zero to prior value
+
        do k = 1,c_lnL%npixreg(p,id)
           !if (cpar%myid == cpar%root) write(*,*) 'pixreg',k,'  -- numbe of pixels',sum_pix(k)
           if (c_lnL%npix_pixreg(k,p,id) > 0) then
