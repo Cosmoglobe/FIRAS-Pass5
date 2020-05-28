@@ -392,12 +392,13 @@ contains
                 stop
              end if
           else
-             self%pol_pixreg_type(j,i) = 0
              !check if alm using defined pixel regions to suggest theta (then to smooth and get alms from map)
              !if so, pixreg values needs to be added. 
              if (self%almsamp_pixreg) then
                 self%pol_pixreg_type(j,i) = 3
                 self%npixreg(j,i) = cpar%cs_spec_npixreg(j,i,id_abs) 
+             else
+                self%pol_pixreg_type(j,i) = 0
              end if
           end if
        end do
