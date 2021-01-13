@@ -39,7 +39,7 @@ if(NOT CFITSIO_FOUND)
 		"./configure" 
 		"--prefix=<INSTALL_DIR>" 
 		"--enable-curl=${CURL_LIBRARIES}"
-		"--disable-curl"
+		#"--disable-curl"
 		)
 	#------------------------------------------------------------------------------
 	# Getting CFITSIO from source

@@ -26,38 +26,48 @@
 message(STATUS "---------------------------------------------------------------")
 # looking for curl in the system and download it if it is not present
 if(NOT (CURL_FORCE_COMPILE OR ALL_FORCE_COMPILE))
+	set(CURL_NO_CURL_CMAKE ON)
 	find_package(CURL)
 endif()
 
 if(NOT CURL_FOUND)
-	# Creating configure command for cURL
-	set(curl_configure_command 
-		"${CMAKE_COMMAND}" "-E" "env" 
-		"FC=${COMMANDER3_Fortran_COMPILER}" 
-		"CXX=${COMMANDER3_CXX_COMPILER}" 
-		"CC=${COMMANDER3_C_COMPILER}" 
-		"CPP=${COMMANDER3_CPP_COMPILER}" 
-		#"CPPFLAGS=-I${OPENSSL_INCLUDE_DIR}"
-		#"LDFLAGS=-L${OPENSSL_LIBRARIES}"
-		"./configure" 
-		"--prefix=<INSTALL_DIR>"
-		)
 	#------------------------------------------------------------------------------
 	# Getting cURL from source
 	#------------------------------------------------------------------------------
 	ExternalProject_Add(${project}
+		DEPENDS required_libraries zlib 
 		URL "${${project}_url}"
 		PREFIX "${CMAKE_DOWNLOAD_DIRECTORY}/${project}"
-		DOWNLOAD_DIR "${CMAKE_DOWNLOAD_DIRECTORY}" #"${download_dir}"
-		BINARY_DIR "${CMAKE_DOWNLOAD_DIRECTORY}/${project}/src/${project}"
-		INSTALL_DIR "${CMAKE_INSTALL_PREFIX}" #"${out_install_dir}"
+		DOWNLOAD_DIR "${CMAKE_DOWNLOAD_DIRECTORY}"
+		SOURCE_DIR "${CMAKE_DOWNLOAD_DIRECTORY}/${project}/src/${project}"
+		INSTALL_DIR "${CMAKE_INSTALL_PREFIX}"
 		LOG_DIR "${CMAKE_LOG_DIR}"
 		LOG_DOWNLOAD ON
-		LOG_CONFIGURE ON
-		LOG_BUILD ON
-		LOG_INSTALL ON
-		CONFIGURE_COMMAND "${${project}_configure_command}"
-		BUILD_ALWAYS FALSE
+		#LOG_CONFIGURE ON
+		#LOG_BUILD ON
+		#LOG_INSTALL ON
+		# commands how to build the project
+		CMAKE_ARGS
+			-DCMAKE_BUILD_TYPE=Release
+			# Specifying installations paths for binaries and libraries
+			-DCMAKE_INSTALL_PREFIX:PATH=<INSTALL_DIR>
+			-DCMAKE_INSTALL_LIBDIR:PATH=lib
+			-DCMAKE_INSTALL_INCLUDEDIR:PATH=include
+			-DBUILD_CURL_EXE:BOOL=ON
+			-DBUILD_SHARED_LIBS:BOOL=ON
+			-DCMAKE_USE_OPENSSL:BOOL=ON
+			# Specifying compilers
+			-DCMAKE_Fortran_COMPILER=${COMMANDER3_Fortran_COMPILER}
+			-DCMAKE_CXX_COMPILER=${COMMANDER3_CXX_COMPILER}
+			-DCMAKE_C_COMPILER=${COMMANDER3_C_COMPILER}
+			# Specifying the location of OpenSSL library
+			-DOPENSSL_INCLUDE_DIR:PATH=${OPENSSL_INCLUDE_DIR}
+			-DOPENSSL_SSL_LIBRARY:FILEPATH=${OPENSSL_SSL_LIBRARIES}
+			-DOPENSSL_CRYPTO_LIBRARY:FILEPATH=${OPENSSL_CRYPTO_LIBRARIES}
+			# Specyfing the location of ZLIB library
+			-DZLIB_INCLUDE_DIR:PATH=${ZLIB_INCLUDE_DIRS}
+			-DZLIB_LIBRARY_RELEASE:FILEPATH=${ZLIB_LIBRARIES}
+			-DCURL_ZLIB:BOOL=ON
 		)
 	# getting curl directories
 	ExternalProject_Get_Property(${project} source_dir)
@@ -68,7 +78,6 @@ if(NOT CURL_FOUND)
 	set(CURL_INCLUDE_DIR ${install_dir}/include)#/${project})
   set(CURL_LIBRARIES ${install_dir}/lib/${CMAKE_STATIC_LIBRARY_PREFIX}${project}${CMAKE_STATIC_LIBRARY_SUFFIX})
 	# including curl into a project
-	#include_directories(${CURL_SOURCE_DIR})
 	include_directories(${CURL_BINARY_DIR})
 	include_directories(${CURL_INCLUDE_DIR})
 	message(STATUS "Curl INCLUDE DIR will be ${CURL_INCLUDE_DIR}")
