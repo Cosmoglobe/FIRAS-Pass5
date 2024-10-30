@@ -72,14 +72,14 @@ longitude = []
 # combine temperatures so that they are only one - use their weights, use only xcal and ical only for now, rest is very small
 xcal_temp = []
 ical_temp = []
-skyhorn_temp = []
-refhorn_temp = []
-bolom1_temp = []
-bolom2_temp = []
-bolom3_temp = []
-bolom4_temp = []
-collim_temp = []
-dihed_temp = []
+# skyhorn_temp = []
+# refhorn_temp = []
+# bolom1_temp = []
+# bolom2_temp = []
+# bolom3_temp = []
+# bolom4_temp = []
+# collim_temp = []
+# dihed_temp = []
 
 # save the proper values for each variable
 for id_eng in range(len(fdq_eng["ct_head/time"])):
