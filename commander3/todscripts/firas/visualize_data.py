@@ -4,7 +4,7 @@ import pandas as pd
 import h5py
 
 # data = pd.read_hdf("./data/df_v2.h5", "df")
-data = h5py.File("./data/df_v2.h5", "r")
+data = h5py.File("./data/df_v4.h5", "r")
 
 peak_positions = {
     "lh ss": 357,
@@ -26,6 +26,7 @@ peak_positions = {
 
 # for i in range(0, len(data["id"]), 100):
 for i in range(0, len(data["df_data/gmt"])):
+    # if str(data["df_data/gmt"][i])[7:9] == "99":
     # speed = data["mtm_speed"][i]
     # speed = "s" if speed == 0 else "f"
     # length = data["mtm_length"][i]
