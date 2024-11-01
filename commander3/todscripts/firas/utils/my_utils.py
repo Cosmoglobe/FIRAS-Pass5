@@ -25,14 +25,25 @@ def clean_xcal_pos(row):
 
 def parse_date_string(gmt_nb):
     # gmt_nb = str(gmt_nb)
+    # print(gmt_nb)
 
     # Split the string into components
     year = int(gmt_nb[:2])
     day_of_year = int(gmt_nb[2:5])
     hour = int(gmt_nb[5:7])
     minute = int(gmt_nb[7:9])
-    second = int(gmt_nb[9:11])
-    millisecond = int(gmt_nb[11:])
+    second = round(float(f"{gmt_nb[9:11]}.{gmt_nb[11:]}"))
+    # millisecond = int(gmt_nb[11:])
+
+    if second == 60:
+        second = 0
+        minute += 1
+    if minute == 60:
+        minute = 0
+        hour += 1
+    if hour == 24:
+        hour = 0
+        day_of_year += 1
 
     # Compute the date from the year and day of the year
     base_date = datetime(year=year + 1900, month=1, day=1)
@@ -46,7 +57,7 @@ def parse_date_string(gmt_nb):
         hour=hour,
         minute=minute,
         second=second,
-        microsecond=millisecond * 1000,
+        # microsecond=millisecond * 1000,
     )
 
     return final_date

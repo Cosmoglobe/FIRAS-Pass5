@@ -1,10 +1,7 @@
-import numpy as np
 import matplotlib.pyplot as plt
-import pandas as pd
 import h5py
 
-# data = pd.read_hdf("./data/df_v2.h5", "df")
-data = h5py.File("./data/df_v4.h5", "r")
+data = h5py.File("./data/df_v6.h5", "r")
 
 peak_positions = {
     "lh ss": 357,
