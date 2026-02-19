@@ -1,9 +1,14 @@
+import data.utils.my_utils as data_utils
+import matplotlib
+
+matplotlib.use('Agg')  # Use non-interactive backend for multiprocessing
+from functools import partial
+from multiprocessing import Pool
+
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import markers
 from scipy.stats import norm
-
-import data.utils.my_utils as data_utils
 
 
 def table3_4(xcal_pos, mtm_length, mtm_speed):
@@ -234,6 +239,75 @@ def hilo_stats(hi, lo, channel, element, side):
     plt.savefig(f"data/output/hilo_temp_difference_histogram/{element}_{side}_{channel}.png")
     plt.close()
 
+def _plot_timeseries_chunk(args):
+    """Helper function for parallel plotting of time series chunks."""
+    i, hi, lo, plateau_masks, channel, element, side = args
+    x = np.arange(i, min(i + 10000, len(lo)))
+    plt.figure(figsize=(12, 6))
+    plt.xlabel("Record Index")
+    plt.ylabel("Temperature (K)")
+    plt.title(f"Detector Temperatures Over Time for {element} ({side.upper()}) - {channel.upper()}")
+    for j, mask in enumerate(plateau_masks):
+        if lo[x][mask[x]].size > 0:
+            plt.plot(x[mask[x]], lo[x][mask[x]], label=f'Plateau {j+1}', ls='None', marker='.',
+                     ms=4, color=f"C{j}")
+    plt.legend()
+    plt.savefig(f"data/output/divide_plateaus/over_time_{element}_{side}_{channel}/lo/{i}.png")
+    plt.close()
+
+
+def divide_plateaus(hi, lo, channel, element, side, n_cores=12):
+    """
+    Divide each of the temperatures into their different plateaus so we can find only one Gaussian
+    for each.
+    """
+
+    print(f"Minimum and maximum low current {channel} ({side} side) for {element}: {lo.min():.3f}, {lo.max():.3f}")
+
+    plt.hist(lo, bins=np.arange(1.5, 25, 0.001))
+    plt.xlabel(f"Low Current {channel.upper()} ({side.upper()} side) for {element}")
+    plt.savefig(f"data/output/divide_plateaus/{element}_{side}_{channel}_lo.png")
+    plt.close()
+
+    with open(f"data/plateau_divides.txt", "r") as f:
+        lines = f.readlines()
+        for line in lines:
+            name = line.split(" ")[0]
+            if name == f"{element}_{side}":
+                plateau_divides = np.array((line.split(" ")[1].split(","))).astype(float)
+                exit
+
+    plateau_masks = []
+    for i, divide in enumerate(plateau_divides):
+        if i == 0:
+            continue
+        else:
+            plateau = (lo >= plateau_divides[i-1]) & (lo < divide)
+            min = plateau_divides[i-1]
+        plateau_masks.append(plateau)
+        print(f"Plateau {i} ({min} to {divide}): {len(lo[plateau]) / len(lo) * 100:.2f}% of the data")
+        plt.hist(lo[plateau], bins=np.arange(min, divide, 0.001))
+        plt.xlabel(f"Low Current {channel.upper()} ({side.upper()} side) for {element} - Plateau {i}")
+        plt.ylabel("Counts")
+        plt.savefig(f"data/output/divide_plateaus/plateau_{i}_lo_{element}_{side}_{channel}.png")
+        plt.close()
+
+    # plot the gaussians to see if we need to tune the divisions
+    diff = hi - lo
+    plt.hist(diff[plateau_masks[0]], bins=np.arange(-0.05, 0.05, 0.001), label="Plateau 0")
+    plt.savefig(f"data/output/divide_plateaus/diff_plateau_0_{element}_{side}_{channel}.png")
+
+    # plot the whole temperature over time and color the points by plateau
+    # plot for each 100000 points to see better - parallelized
+    chunk_indices = list(range(0, len(lo), 10000))
+    args_list = [(i, hi, lo, plateau_masks, channel, element, side) for i in chunk_indices]
+    
+    with Pool(processes=n_cores) as pool:
+        pool.map(_plot_timeseries_chunk, args_list)
+
+    return plateau_masks
+
+
 def fit_gaussian(hi, lo, channel, element, side, ngaussians=2, sigma=3):
     """Fit a Gaussian to the difference between hi and lo temperatures."""
 
@@ -257,7 +331,6 @@ def fit_gaussian(hi, lo, channel, element, side, ngaussians=2, sigma=3):
             lims2 = (0.018, 0.023)
     else:
         return
-        quit()
 
     # fit two specific gaussians
     # set up plot
@@ -269,16 +342,16 @@ def fit_gaussian(hi, lo, channel, element, side, ngaussians=2, sigma=3):
     diff = hi - lo
 
     # plot the full distribution
-    plt.hist(diff, bins=np.linspace(-0.05, 0.05, 1000), density=True)
+    plt.hist(diff, bins=np.arange(-0.05, 0.05, 0.001), density=True)
 
     # cut and plot the biggest gaussian
     if ngaussians > 0:
         diff_g1 = diff[(diff > lims1[0]) & (diff < lims1[1])]
-        plt.hist(diff_g1, bins=np.linspace(-0.05, 0.05, 1000), density=True)
+        plt.hist(diff_g1, bins=np.arange(-0.05, 0.05, 0.001), density=True)
     
     if ngaussians > 1:
         diff_g2 = diff[(diff > lims2[0]) & (diff < lims2[1])]
-        plt.hist(diff_g2, bins=np.linspace(-0.05, 0.05, 1000), density=True)
+        plt.hist(diff_g2, bins=np.arange(-0.05, 0.05, 0.001), density=True)
     
     # set axis from the full distribution
     xmin, xmax = plt.xlim()
@@ -306,7 +379,7 @@ def fit_gaussian(hi, lo, channel, element, side, ngaussians=2, sigma=3):
         print(f"Explained fraction by Gaussian 2 ({sigma} std): {explained2*100:.02f}%")
     
     plt.legend()
-    plt.savefig(f"data/output/hilo_temp_difference_gaussian_fit/{element}_{side}_{channel}.png")
+    plt.savefig(f"data/output/fit_gaussian/hilo_temp_difference/{element}_{side}_{channel}.png")
     plt.close()
 
     # plot all temperatures over time for visual inspection
@@ -326,7 +399,7 @@ def fit_gaussian(hi, lo, channel, element, side, ngaussians=2, sigma=3):
     
     plt.plot(x, hi, label='High Temp')
     plt.plot(x, lo, label='Low Temp')
-    plt.savefig(f"data/output/hilo_temp_timeseries/{element}_{side}_{channel}_g0.png")
+    plt.savefig(f"data/output/fit_gaussian/hilo_temp_timeseries/{element}_{side}_{channel}_g0.png")
     if ngaussians > 0:
         plt.plot(x[(diff > mu - sigma*std) & (diff < mu + sigma*std)],
                  hi[(diff > mu - sigma*std) & (diff < mu + sigma*std)], label='Explained by Gaussian 1',
@@ -335,7 +408,7 @@ def fit_gaussian(hi, lo, channel, element, side, ngaussians=2, sigma=3):
                  lo[(diff > mu - sigma*std) & (diff < mu + sigma*std)], label='Explained by Gaussian 1',
                     linestyle='None', marker='.')
         plt.legend()
-        plt.savefig(f"data/output/hilo_temp_timeseries/{element}_{side}_{channel}_g1.png")
+        plt.savefig(f"data/output/fit_gaussian/hilo_temp_timeseries/{element}_{side}_{channel}_g1.png")
     if ngaussians > 1:
         plt.plot(x[(diff > mu2 - sigma*std2) & (diff < mu2 + sigma*std2)],
                  hi[(diff > mu2 - sigma*std2) & (diff < mu2 + sigma*std2)], label='Explained by Gaussian 2',
