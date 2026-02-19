@@ -1,5 +1,5 @@
-import data.utils.my_utils as data_utils
 import matplotlib
+import scipy.odr as odr
 
 matplotlib.use('Agg')  # Use non-interactive backend for multiprocessing
 from functools import partial
@@ -252,7 +252,7 @@ def _plot_timeseries_chunk(args):
             plt.plot(x[mask[x]], lo[x][mask[x]], label=f'Plateau {j+1}', ls='None', marker='.',
                      ms=4, color=f"C{j}")
     plt.legend()
-    plt.savefig(f"data/output/divide_plateaus/over_time_{element}_{side}_{channel}/lo/{i}.png")
+    plt.savefig(f"data/output/divide_plateaus/01_over_time_{element}_{side}_{channel}/lo/{i}.png")
     plt.close()
 
 
@@ -296,6 +296,7 @@ def divide_plateaus(hi, lo, channel, element, side, n_cores=12):
     diff = hi - lo
     plt.hist(diff[plateau_masks[0]], bins=np.arange(-0.05, 0.05, 0.001), label="Plateau 0")
     plt.savefig(f"data/output/divide_plateaus/diff_plateau_0_{element}_{side}_{channel}.png")
+    plt.close()
 
     # plot the whole temperature over time and color the points by plateau
     # plot for each 100000 points to see better - parallelized
@@ -305,54 +306,43 @@ def divide_plateaus(hi, lo, channel, element, side, n_cores=12):
     with Pool(processes=n_cores) as pool:
         pool.map(_plot_timeseries_chunk, args_list)
 
+    # plot timeseries of only the points in the first plateau to see if there are more to split
+    for i in range(len(plateau_masks)):
+        plt.plot(lo[plateau_masks[i]])
+        plt.xlabel("Record Index")
+        plt.ylabel("Temperature (K)")
+        plt.title(f"Low Current Over Time for {element} ({side.upper()}) - {channel.upper()}")
+        plt.savefig(f"data/output/divide_plateaus/01_over_time_{element}_{side}_{channel}/plateaus/{i+1}.png")
+        plt.close()
+
     return plateau_masks
 
 
-def fit_gaussian(hi, lo, channel, element, side, ngaussians=2, sigma=3):
+def fit_gaussian(hi, lo, channel, element, side, sigma=3, plateau=0):
     """Fit a Gaussian to the difference between hi and lo temperatures."""
+    # fit a gaussian to the input temperatures?
+    plt.hist(hi)
+    plt.xlabel(f"High Current {channel.upper()} ({side.upper()} side) for {element}")
+    plt.savefig(f"data/output/fit_gaussian/{element}_{side}_{channel}_hi/plateau{plateau}.png")
+    plt.close()
 
-    if element == "ical":
-        if side == "a":
-            lims1 = (0.0101, 0.0155)
-            lims2 = (0.030, 0.034)
+    avg_temp = np.mean(hi)
+    std_temp = np.std(hi)
 
-        elif side == "b":
-            lims1 = (0.0009, 0.0070)
-            lims2 = (0.008, 0.011)
+    diff = hi - lo
+    # print(f"Minimum and maximum difference: {diff.min():.3f}, {diff.max():.3f}")
 
-    elif element == "dihedral":
-        return
-        if side == "a":
-            lims1 = (0.0050, 0.0100)
-            lims2 = (0.020, 0.025)
-
-        elif side == "b":
-            lims1 = (0.011, 0.016)
-            lims2 = (0.018, 0.023)
-    else:
-        return
-
-    # fit two specific gaussians
+        # fit two specific gaussians
     # set up plot
     plt.yscale('log')
     plt.title(f"{channel.upper()} for " + element + " (" + side.upper() + " side)")
     plt.xlabel("High - Low Detector Temperature (K)")
     plt.ylabel("Density")
 
-    diff = hi - lo
 
     # plot the full distribution
-    plt.hist(diff, bins=np.arange(-0.05, 0.05, 0.001), density=True)
+    plt.hist(diff, bins=np.linspace(-abs(diff).max(), abs(diff).max(), 1000), density=True)
 
-    # cut and plot the biggest gaussian
-    if ngaussians > 0:
-        diff_g1 = diff[(diff > lims1[0]) & (diff < lims1[1])]
-        plt.hist(diff_g1, bins=np.arange(-0.05, 0.05, 0.001), density=True)
-    
-    if ngaussians > 1:
-        diff_g2 = diff[(diff > lims2[0]) & (diff < lims2[1])]
-        plt.hist(diff_g2, bins=np.arange(-0.05, 0.05, 0.001), density=True)
-    
     # set axis from the full distribution
     xmin, xmax = plt.xlim()
     # xmin, xmax = 0.01, 0.015
@@ -360,27 +350,19 @@ def fit_gaussian(hi, lo, channel, element, side, ngaussians=2, sigma=3):
     plt.ylim(1, None)
 
     # fit the normal distribution to the data
-    if ngaussians > 0:
-        mu, std = norm.fit(diff_g1, loc=0.015, scale=0.005)
+    mu, std = norm.fit(diff, loc=0.015, scale=0.005)
 
-        # plot the histogram and the fitted Gaussian
-        p = norm.pdf(x, mu, std)
-        plt.plot(x, p, ls='dashed', label='Gaussian 1')
-        print(f"Fitted Gaussian 1 for {element} {side} {channel}: mu={mu:.04f}, std={std:.04f}")
-        explained = len(diff[(diff > mu - sigma*std) & (diff < mu + sigma*std)]) / len(diff)
-        print(f"Explained fraction by Gaussian 1 ({sigma} std): {explained*100:.02f}%")
+    # plot the histogram and the fitted Gaussian
+    p = norm.pdf(x, mu, std)
+    plt.plot(x, p, ls='dashed', label=f'Gaussian for Plateau {plateau}')
+    print(f"Fitted gaussian for plateau {plateau} for {element} {side} {channel}: mu={mu:.04f}, std={std:.04f}")
+    explained = len(diff[(diff > mu - sigma*std) & (diff < mu + sigma*std)]) / len(diff)
+    print(f"Explained fraction by the gaussian at {sigma} std: {explained*100:.02f}%")
 
-    if ngaussians > 1:
-        mu2, std2 = norm.fit(diff_g2, loc=0.02, scale=0.005)
-        p2 = norm.pdf(x, mu2, std2)
-        plt.plot(x, p2, ls='dashed', label='Gaussian 2')
-        print(f"Fitted Gaussian 2 for {element} {side} {channel}: mu={mu2:.04f}, std={std2:.04f}")
-        explained2 = len(diff[(diff > mu2 - sigma*std2) & (diff < mu2 + sigma*std2)]) / len(diff)
-        print(f"Explained fraction by Gaussian 2 ({sigma} std): {explained2*100:.02f}%")
-    
     plt.legend()
-    plt.savefig(f"data/output/fit_gaussian/hilo_temp_difference/{element}_{side}_{channel}.png")
+    plt.savefig(f"data/output/fit_gaussian/01_hilo_temp_difference/{element}_{side}_{channel}_plateau{plateau}.png")
     plt.close()
+    return mu, std, avg_temp, std_temp
 
     # plot all temperatures over time for visual inspection
     plt.figure(figsize=(12, 6))
@@ -399,7 +381,8 @@ def fit_gaussian(hi, lo, channel, element, side, ngaussians=2, sigma=3):
     
     plt.plot(x, hi, label='High Temp')
     plt.plot(x, lo, label='Low Temp')
-    plt.savefig(f"data/output/fit_gaussian/hilo_temp_timeseries/{element}_{side}_{channel}_g0.png")
+    plt.savefig(f"data/output/fit_gaussian/hilo_temp_timeseries/{element}_{side}_{channel}_plateau{plateau}_g0.png")
+    plt.close()
     if ngaussians > 0:
         plt.plot(x[(diff > mu - sigma*std) & (diff < mu + sigma*std)],
                  hi[(diff > mu - sigma*std) & (diff < mu + sigma*std)], label='Explained by Gaussian 1',
@@ -409,6 +392,7 @@ def fit_gaussian(hi, lo, channel, element, side, ngaussians=2, sigma=3):
                     linestyle='None', marker='.')
         plt.legend()
         plt.savefig(f"data/output/fit_gaussian/hilo_temp_timeseries/{element}_{side}_{channel}_g1.png")
+        plt.close()
     if ngaussians > 1:
         plt.plot(x[(diff > mu2 - sigma*std2) & (diff < mu2 + sigma*std2)],
                  hi[(diff > mu2 - sigma*std2) & (diff < mu2 + sigma*std2)], label='Explained by Gaussian 2',
@@ -417,7 +401,8 @@ def fit_gaussian(hi, lo, channel, element, side, ngaussians=2, sigma=3):
                  lo[(diff > mu2 - sigma*std2) & (diff < mu2 + sigma*std2)], label='Explained by Gaussian 2',
                     linestyle='None', marker='.')
         plt.legend()
-        plt.savefig(f"data/output/hilo_temp_timeseries/{element}_{side}_{channel}_g2.png")
+        plt.savefig(f"data/output/fit_gaussian/hilo_temp_timeseries/{element}_{side}_{channel}_g2.png")
+        plt.close()
     
     # plt.savefig(f"data/output/hilo_temp_timeseries/{element}_{side}_{channel}.png")
     plt.close()
@@ -425,6 +410,48 @@ def fit_gaussian(hi, lo, channel, element, side, ngaussians=2, sigma=3):
         return mu, std
     elif ngaussians == 2:
         return mu, std, mu2, std2
+
+def negative_exponential(beta, x):
+    A = beta[0]
+    lamb = beta[1]
+    return A * np.exp(-lamb * x)
+
+def linear_model(beta, x):
+    m = beta[0]
+    b = beta[1]
+    return m * x + b
+
+def selfheat_vs_temp(mu, std, avg_temp, std_temp):
+    plt.errorbar(avg_temp, mu, yerr=std, xerr=std_temp, fmt='o')
+    plt.xlabel("Average High Current Temperature (K)")
+    plt.ylabel("Fitted Gaussian Mean of High-Low Difference (K)")
+    plt.title("Self-Heating vs Average High Current Temperature")
+    plt.savefig(f"data/output/selfheat_vs_temp.png")
+
+    sx = np.abs(std_temp)  # Uncertainty in x (sigma_x)
+    sy = np.abs(std)  # Uncertainty in y (sigma_y)
+    data = odr.Data(avg_temp, mu, wd=1/sx**2, we=1/sy**2)  # wd: x weights, we: y weights
+
+    model = odr.Model(negative_exponential)
+    # Initialize ODR with model, data, and initial parameter guess
+    odr_obj = odr.ODR(data, model, beta0=[1.0, 0.0])
+    # Run the fit
+    odr_result_exp = odr_obj.run()
+    print(f"Residual variance for negative exponential: {odr_result_exp.res_var:.2f}")
+
+    model = odr.Model(linear_model)
+    odr_obj = odr.ODR(data, model, beta0=[0.0, 0.0])
+    odr_result_linear = odr_obj.run()
+    print(f"Residual variance for linear model: {odr_result_linear.res_var:.2f}")
+
+    x = np.linspace(avg_temp.min() - 0.5, avg_temp.max() + 0.5, 100)
+    plt.plot(x, negative_exponential(odr_result_exp.beta, x), "r-", label="Negative exponential")
+    plt.plot(x, linear_model(odr_result_linear.beta, x), "g-", label="Linear")
+    plt.legend()
+    plt.savefig(f"data/output/selfheat_vs_temp_odr_fit.png")
+    plt.close()
+
+    return odr_result_exp.beta
     
 def debiase_hi(mu, std, mu2, std2, hi, lo, element, side, channel, sigma=3):
     """Debiase the high temperature using the fitted Gaussian parameters."""

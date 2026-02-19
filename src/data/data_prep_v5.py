@@ -181,17 +181,22 @@ for channel, channel_i in g.CHANNELS.items():
                                                       temps[f"{side}_lo_{element}"],
                                                       channel, element, side)
 
-                print(f"DEBUG: plateau_masks: {plateau_masks}")
+                mu = np.zeros(len(plateau_masks))
+                std = np.zeros(len(plateau_masks))
+                avg_temp = np.zeros(len(plateau_masks))
+                std_temp = np.zeros(len(plateau_masks))
+
                 for i, mask in enumerate(plateau_masks):
-                    mu, std, mu2, std2 = stats.fit_gaussian(temps[f"{side}_hi_{element}"][mask],
+                    mu[i], std[i], avg_temp[i], std_temp[i] = stats.fit_gaussian(temps[f"{side}_hi_{element}"][mask],
                                                             temps[f"{side}_lo_{element}"][mask],
-                                                            channel, element, side, ngaussians=2,
-                                                            sigma=1)
-                    temps[f"{side}_{element}"], temp_mask[side] = stats.debiase_hi(mu, std, mu2,
-                                                                                    std2,
+                                                            channel, element, side,
+                                                            sigma=1, plateau=i+1)
+                    
+                beta = stats.selfheat_vs_temp(mu, std, avg_temp, std_temp)
+                temps[f"{side}_{element}"], temp_mask[side] = stats.debiase_hi(beta,
                                                                 temps[f"{side}_hi_{element}"][mask],
                                                                 temps[f"{side}_lo_{element}"][mask],
-                                                                element, side, sigma=1)
+                                                                element, side)
                 
                 if side == 'b':
                     # Apply combined mask to ical temperatures and xcal_pos
