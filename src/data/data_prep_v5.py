@@ -193,17 +193,10 @@ for channel, channel_i in g.CHANNELS.items():
                                                             sigma=1, plateau=i+1)
                     
                 beta = stats.selfheat_vs_temp(mu, std, avg_temp, std_temp)
-                temps[f"{side}_{element}"], temp_mask[side] = stats.debiase_hi(beta,
-                                                                temps[f"{side}_hi_{element}"][mask],
-                                                                temps[f"{side}_lo_{element}"][mask],
-                                                                element, side)
-                
-                if side == 'b':
-                    # Apply combined mask to ical temperatures and xcal_pos
-                    combined_mask = temp_mask["a"] & temp_mask["b"]
-                    temps[f"a_ical"] = temps[f"a_ical"][combined_mask]
-                    temps[f"b_ical"] = temps[f"b_ical"][combined_mask]
-                    xcal_pos = xcal_pos[combined_mask]
+                temps[f"{side}_{element}"] = stats.debiase_hi(beta,
+                                                             temps[f"{side}_hi_{element}"],
+                                                             temps[f"{side}_lo_{element}"],
+                                                             element, side, channel)
 
             elif element == "xcal_cone":
                     temps[f"{side}_hi_{element}"] = temps[f"{side}_hi_{element}"][xcal_pos == 1]
@@ -219,7 +212,7 @@ for channel, channel_i in g.CHANNELS.items():
                     temps[f"{side}_hi_{element}"],
                     element,
                     side,
-                )[combined_mask]
+                )
 
         if element == "ical":
             all_data = (temps["a_ical"] * 0.1 + temps["b_ical"] * 0.9)  # from fex_grtcoawt.txt
@@ -232,7 +225,7 @@ for channel, channel_i in g.CHANNELS.items():
 
     collimator_hi = interpolators["a_hi_collimator"](midpoint_time_s)
     collimator_lo = interpolators["a_lo_collimator"](midpoint_time_s)
-    all_data = ((collimator_hi + collimator_lo) / 2.0)[combined_mask]
+    all_data = ((collimator_hi + collimator_lo) / 2.0)
 
     cal_data["collimator"] = all_data[xcal_pos == 1]
     sky_data["collimator"] = all_data[xcal_pos == 2]
@@ -250,7 +243,7 @@ for channel, channel_i in g.CHANNELS.items():
             else:
                 all_data = np.append(cal_data[key], sky_data[key])
             all_data = all_data[sorted_indices]
-            all_data = all_data[combined_mask]
+            all_data = all_data
             cal_data[key] = all_data[xcal_pos == 1]
             sky_data[key] = all_data[xcal_pos == 2]
             # print(f"DEBUG key: {key}. Shape after masking: cal_data {cal_data[key].shape}, sky_data {sky_data[key].shape}")

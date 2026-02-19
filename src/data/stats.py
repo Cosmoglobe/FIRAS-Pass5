@@ -453,44 +453,64 @@ def selfheat_vs_temp(mu, std, avg_temp, std_temp):
 
     return odr_result_exp.beta
     
-def debiase_hi(mu, std, mu2, std2, hi, lo, element, side, channel, sigma=3):
+def debiase_hi(beta, hi, lo, element, side, channel):
     """Debiase the high temperature using the fitted Gaussian parameters."""
-    diff = hi - lo
+    # diff = hi - lo
     debiased_hi = np.copy(hi)
 
-    # Debias using the first Gaussian
-    mask1 = (diff > mu - sigma*std) & (diff < mu + sigma*std)
-    debiased_hi[mask1] = hi[mask1] - mu
+    # Debias using the fitted negative exponential model
+    debiased_hi = hi - negative_exponential(beta, hi)
 
-    # Debias using the second Gaussian
-    mask2 = (diff > mu2 - sigma*std2) & (diff < mu2 + sigma*std2)
-    debiased_hi[mask2] = hi[mask2] - mu2
+    # mask1 = (diff > mu - sigma*std) & (diff < mu + sigma*std)
+    # debiased_hi[mask1] = hi[mask1] - mu
+
+    # # Debias using the second Gaussian
+    # mask2 = (diff > mu2 - sigma*std2) & (diff < mu2 + sigma*std2)
+    # debiased_hi[mask2] = hi[mask2] - mu2
 
     # plot before and after
     plt.plot(lo, label='Low Current')
     plt.plot(hi, label='High Current', ls='None', marker='.')
-    plt.savefig(f"data/output/hilo_temp_debiasing/{element}_{side}_{channel}_0.png")
+    plt.savefig(f"data/output/debiase_hi/{element}_{side}_{channel}_0.png")
+    plt.legend()
     plt.close()
 
     x = np.arange(len(hi))
     plt.plot(x, lo, label='Low Current')
-    plt.plot(x[mask1 | mask2], debiased_hi[mask1 | mask2], label='Debiased High Current', ls='None',
+    plt.plot(x, debiased_hi, label='Debiased High Current', ls='None',
              marker='.', ms=4)
-    plt.savefig(f"data/output/hilo_temp_debiasing/{element}_{side}_{channel}_1.png")
+    plt.legend()
+    plt.savefig(f"data/output/debiase_hi/{element}_{side}_{channel}_1.png")
     plt.close()
 
     # plot before and after zoom-in
     plt.plot(lo, label='Low Current')
     plt.plot(hi, label='High Current', ls='None', marker='.', ms=4)
     plt.ylim(2.5, 3)
-    plt.savefig(f"data/output/hilo_temp_debiasing/{element}_{side}_{channel}_zoom_0.png")
+    plt.legend()
+    plt.savefig(f"data/output/debiase_hi/{element}_{side}_{channel}_zoom_0.png")
     plt.close()
 
-    x = np.arange(len(hi))
     plt.plot(x, lo, label='Low Current')
-    plt.plot(x[mask1 | mask2], debiased_hi[mask1 | mask2], label='Debiased High Current', ls='None',
-             marker='.', ms=4)
+    plt.plot(x, debiased_hi, label='Debiased High Current', ls='None', marker='.', ms=4)
+    plt.legend()
     plt.ylim(2.5, 3)
-    plt.savefig(f"data/output/hilo_temp_debiasing/{element}_{side}_{channel}_zoom_1.png")
+    plt.savefig(f"data/output/debiase_hi/{element}_{side}_{channel}_zoom_1.png")
     plt.close()
-    return debiased_hi, mask1 | mask2
+
+    for i in range(0, len(debiased_hi), 10000):
+        plt.plot(x[i:i+10000], lo[i:i+10000], label='Low Current')
+        plt.plot(x[i:i+10000], hi[i:i+10000],
+                 label='High Current', ls='None', marker='.', ms=4)
+        plt.legend()
+        plt.savefig(f"data/output/debiase_hi/{element}_{side}_{channel}_timeseries/{i}_0.png")
+        plt.close()
+
+        plt.plot(x[i:i+10000], lo[i:i+10000], label='Low Current')
+        plt.plot(x[i:i+10000], debiased_hi[i:i+10000],
+                 label='Debiased High Current', ls='None', marker='.', ms=4)
+        plt.legend()
+        plt.savefig(f"data/output/debiase_hi/{element}_{side}_{channel}_timeseries/{i}_1.png")
+        plt.close()
+
+    return debiased_hi
