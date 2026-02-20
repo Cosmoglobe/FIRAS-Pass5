@@ -1,3 +1,4 @@
+import globals as g
 import matplotlib
 import scipy.odr as odr
 
@@ -252,7 +253,7 @@ def _plot_timeseries_chunk(args):
             plt.plot(x[mask[x]], lo[x][mask[x]], label=f'Plateau {j+1}', ls='None', marker='.',
                      ms=4, color=f"C{j}")
     plt.legend()
-    plt.savefig(f"data/output/divide_plateaus/01_over_time_{element}_{side}_{channel}/lo/{i}.png")
+    plt.savefig(f"data/output/divide_plateaus/02_chunks_over_time_{element}_{channel}/side_{side}/{i}.png")
     plt.close()
 
 
@@ -262,12 +263,12 @@ def divide_plateaus(hi, lo, channel, element, side, n_cores=12):
     for each.
     """
 
-    print(f"Minimum and maximum low current {channel} ({side} side) for {element}: {lo.min():.3f}, {lo.max():.3f}")
+    print(f"Minimum and maximum low current {channel} ({side.upper()} side) for {element}: {lo.min():.3f}, {lo.max():.3f}")
 
-    plt.hist(lo, bins=np.arange(1.5, 25, 0.001))
-    plt.xlabel(f"Low Current {channel.upper()} ({side.upper()} side) for {element}")
-    plt.savefig(f"data/output/divide_plateaus/{element}_{side}_{channel}_lo.png")
-    plt.close()
+    # plt.hist(lo, bins=np.arange(1.5, 25, 0.001))
+    # plt.xlabel(f"Low Current {channel.upper()} ({side.upper()} side) for {element}")
+    # plt.savefig(f"data/output/divide_plateaus/01_lo_{element}_{channel}/{side}.png")
+    # plt.close()
 
     with open(f"data/plateau_divides.txt", "r") as f:
         lines = f.readlines()
@@ -285,26 +286,26 @@ def divide_plateaus(hi, lo, channel, element, side, n_cores=12):
             plateau = (lo >= plateau_divides[i-1]) & (lo < divide)
             min = plateau_divides[i-1]
         plateau_masks.append(plateau)
-        print(f"Plateau {i} ({min} to {divide}): {len(lo[plateau]) / len(lo) * 100:.2f}% of the data")
-        plt.hist(lo[plateau], bins=np.arange(min, divide, 0.001))
-        plt.xlabel(f"Low Current {channel.upper()} ({side.upper()} side) for {element} - Plateau {i}")
-        plt.ylabel("Counts")
-        plt.savefig(f"data/output/divide_plateaus/plateau_{i}_lo_{element}_{side}_{channel}.png")
-        plt.close()
 
-    # plot the gaussians to see if we need to tune the divisions
-    diff = hi - lo
-    plt.hist(diff[plateau_masks[0]], bins=np.arange(-0.05, 0.05, 0.001), label="Plateau 0")
-    plt.savefig(f"data/output/divide_plateaus/diff_plateau_0_{element}_{side}_{channel}.png")
-    plt.close()
+        if g.VERBOSE > 2:
+            print(f"Plateau {i} ({min} to {divide}): {len(lo[plateau]) / len(lo) * 100:.2f}% of the data")
+            plt.hist(lo[plateau], bins=np.arange(min, divide, 0.001))
+            plt.xlabel(f"Low Current {channel.upper()} ({side.upper()} side) for {element} - Plateau {i}")
+            plt.ylabel("Counts")
+            plt.savefig(f"data/output/divide_plateaus/01_plateau_{element}_{channel}/side_{side}/{i}.png")
+            plt.close()
+    if g.VERBOSE > 2:
+        print("Plotted check 1 -----------------------------------------------------------------------")
 
     # plot the whole temperature over time and color the points by plateau
     # plot for each 100000 points to see better - parallelized
     chunk_indices = list(range(0, len(lo), 10000))
     args_list = [(i, hi, lo, plateau_masks, channel, element, side) for i in chunk_indices]
     
-    with Pool(processes=n_cores) as pool:
-        pool.map(_plot_timeseries_chunk, args_list)
+    if g.VERBOSE > 2:
+        with Pool(processes=n_cores) as pool:
+            pool.map(_plot_timeseries_chunk, args_list)
+        print("Plotted check 2 -----------------------------------------------------------------------")
 
     # plot timeseries of only the points in the first plateau to see if there are more to split
     for i in range(len(plateau_masks)):
@@ -312,8 +313,9 @@ def divide_plateaus(hi, lo, channel, element, side, n_cores=12):
         plt.xlabel("Record Index")
         plt.ylabel("Temperature (K)")
         plt.title(f"Low Current Over Time for {element} ({side.upper()}) - {channel.upper()}")
-        plt.savefig(f"data/output/divide_plateaus/01_over_time_{element}_{side}_{channel}/plateaus/{i+1}.png")
+        plt.savefig(f"data/output/divide_plateaus/03_plateaus_over_time_{element}_{channel}/side_{side}/{i+1}.png")
         plt.close()
+    print("Plotted check 3 -----------------------------------------------------------------------")
 
     return plateau_masks
 
@@ -321,10 +323,8 @@ def divide_plateaus(hi, lo, channel, element, side, n_cores=12):
 def fit_gaussian(hi, lo, channel, element, side, sigma=3, plateau=0):
     """Fit a Gaussian to the difference between hi and lo temperatures."""
     # fit a gaussian to the input temperatures?
-    plt.hist(hi)
-    plt.xlabel(f"High Current {channel.upper()} ({side.upper()} side) for {element}")
-    plt.savefig(f"data/output/fit_gaussian/{element}_{side}_{channel}_hi/plateau{plateau}.png")
-    plt.close()
+    if g.VERBOSE > 1:
+        print("Starting fit_gaussian -------------------------------------------------------------")
 
     avg_temp = np.mean(hi)
     std_temp = np.std(hi)
@@ -332,36 +332,35 @@ def fit_gaussian(hi, lo, channel, element, side, sigma=3, plateau=0):
     diff = hi - lo
     # print(f"Minimum and maximum difference: {diff.min():.3f}, {diff.max():.3f}")
 
-        # fit two specific gaussians
-    # set up plot
-    plt.yscale('log')
-    plt.title(f"{channel.upper()} for " + element + " (" + side.upper() + " side)")
-    plt.xlabel("High - Low Detector Temperature (K)")
-    plt.ylabel("Density")
-
-
-    # plot the full distribution
-    plt.hist(diff, bins=np.linspace(-abs(diff).max(), abs(diff).max(), 1000), density=True)
-
-    # set axis from the full distribution
-    xmin, xmax = plt.xlim()
-    # xmin, xmax = 0.01, 0.015
-    x = np.linspace(xmin, xmax, 100)
-    plt.ylim(1, None)
-
     # fit the normal distribution to the data
     mu, std = norm.fit(diff, loc=0.015, scale=0.005)
 
-    # plot the histogram and the fitted Gaussian
-    p = norm.pdf(x, mu, std)
-    plt.plot(x, p, ls='dashed', label=f'Gaussian for Plateau {plateau}')
-    print(f"Fitted gaussian for plateau {plateau} for {element} {side} {channel}: mu={mu:.04f}, std={std:.04f}")
-    explained = len(diff[(diff > mu - sigma*std) & (diff < mu + sigma*std)]) / len(diff)
-    print(f"Explained fraction by the gaussian at {sigma} std: {explained*100:.02f}%")
+    # set up plot
+    if g.VERBOSE > 2:
+        plt.yscale('log')
+        plt.title(f"{channel.upper()} for " + element + " (" + side.upper() + " side)")
+        plt.xlabel("High - Low Detector Temperature (K)")
+        plt.ylabel("Density")
 
-    plt.legend()
-    plt.savefig(f"data/output/fit_gaussian/01_hilo_temp_difference/{element}_{side}_{channel}_plateau{plateau}.png")
-    plt.close()
+        # plot the full distribution
+        plt.hist(diff, bins=np.linspace(-abs(diff).max(), abs(diff).max(), 1000), density=True)
+        plt.ylim(1, None)
+
+        # set axis from the full distribution
+        xmin, xmax = plt.xlim()
+        x = np.linspace(xmin, xmax, 100)
+
+        # plot the histogram and the fitted Gaussian
+        p = norm.pdf(x, mu, std)
+        plt.plot(x, p, ls='dashed', label=f'Gaussian for Plateau {plateau}')
+        print(f"Fitted gaussian for plateau {plateau} for {element} {side} {channel}: mu={mu:.04f}, std={std:.04f}")
+        explained = len(diff[(diff > mu - sigma*std) & (diff < mu + sigma*std)]) / len(diff)
+        print(f"Explained fraction by the gaussian at {sigma} std: {explained*100:.02f}%")
+
+        plt.legend()
+        plt.savefig(f"data/output/fit_gaussian/01_hilo_temp_difference/{element}_{channel}/side_{side}/plateau_{plateau}.png")
+        plt.close()
+        print("Plotted check 1 -------------------------------------------------------------------")
     return mu, std, avg_temp, std_temp
 
     # plot all temperatures over time for visual inspection
@@ -421,12 +420,15 @@ def linear_model(beta, x):
     b = beta[1]
     return m * x + b
 
-def selfheat_vs_temp(mu, std, avg_temp, std_temp):
-    plt.errorbar(avg_temp, mu, yerr=std, xerr=std_temp, fmt='o')
-    plt.xlabel("Average High Current Temperature (K)")
-    plt.ylabel("Fitted Gaussian Mean of High-Low Difference (K)")
-    plt.title("Self-Heating vs Average High Current Temperature")
-    plt.savefig(f"data/output/selfheat_vs_temp.png")
+def selfheat_vs_temp(mu, std, avg_temp, std_temp, side):
+    if g.VERBOSE > 1:
+        print("Starting selfheat_vs_temp ---------------------------------------------------------")
+    if g.VERBOSE > 2:
+        plt.errorbar(avg_temp, mu, yerr=std, xerr=std_temp, fmt='o')
+        plt.xlabel("Average High Current Temperature (K)")
+        plt.ylabel("Fitted Gaussian Mean of High-Low Difference (K)")
+        plt.title("Self-Heating vs Average High Current Temperature")
+        plt.savefig(f"data/output/selfheat_vs_temp/{side}.png")
 
     sx = np.abs(std_temp)  # Uncertainty in x (sigma_x)
     sy = np.abs(std)  # Uncertainty in y (sigma_y)
@@ -444,17 +446,21 @@ def selfheat_vs_temp(mu, std, avg_temp, std_temp):
     odr_result_linear = odr_obj.run()
     print(f"Residual variance for linear model: {odr_result_linear.res_var:.2f}")
 
-    x = np.linspace(avg_temp.min() - 0.5, avg_temp.max() + 0.5, 100)
-    plt.plot(x, negative_exponential(odr_result_exp.beta, x), "r-", label="Negative exponential")
-    plt.plot(x, linear_model(odr_result_linear.beta, x), "g-", label="Linear")
-    plt.legend()
-    plt.savefig(f"data/output/selfheat_vs_temp_odr_fit.png")
-    plt.close()
+    if g.VERBOSE > 2:
+        x = np.linspace(avg_temp.min() - 0.5, avg_temp.max() + 0.5, 100)
+        plt.plot(x, negative_exponential(odr_result_exp.beta, x), "r-", label="Negative exponential")
+        plt.plot(x, linear_model(odr_result_linear.beta, x), "g-", label="Linear")
+        plt.legend()
+        plt.savefig(f"data/output/selfheat_vs_temp/01_odr_fit/{side}.png")
+        plt.close()
+        print("Plotted check 1 -------------------------------------------------------------------")
 
     return odr_result_exp.beta
     
 def debiase_hi(beta, hi, lo, element, side, channel):
     """Debiase the high temperature using the fitted Gaussian parameters."""
+    if g.VERBOSE > 1:
+        print("Starting debiase_hi ---------------------------------------------------------------")
     # diff = hi - lo
     debiased_hi = np.copy(hi)
 
@@ -468,49 +474,22 @@ def debiase_hi(beta, hi, lo, element, side, channel):
     # mask2 = (diff > mu2 - sigma*std2) & (diff < mu2 + sigma*std2)
     # debiased_hi[mask2] = hi[mask2] - mu2
 
-    # plot before and after
-    plt.plot(lo, label='Low Current')
-    plt.plot(hi, label='High Current', ls='None', marker='.')
-    plt.savefig(f"data/output/debiase_hi/{element}_{side}_{channel}_0.png")
-    plt.legend()
-    plt.close()
+    if g.VERBOSE > 2:
+        x = np.arange(len(hi))
+        for i in range(0, len(debiased_hi), 10000):
+            plt.plot(x[i:i+10000], lo[i:i+10000], label='Low Current')
+            plt.plot(x[i:i+10000], hi[i:i+10000],
+                    label='High Current', ls='None', marker='.', ms=4)
+            plt.legend()
+            plt.savefig(f"data/output/debiase_hi/01_timeseries/{element}_{side}_{channel}_{i}_0.png")
+            plt.close()
 
-    x = np.arange(len(hi))
-    plt.plot(x, lo, label='Low Current')
-    plt.plot(x, debiased_hi, label='Debiased High Current', ls='None',
-             marker='.', ms=4)
-    plt.legend()
-    plt.savefig(f"data/output/debiase_hi/{element}_{side}_{channel}_1.png")
-    plt.close()
-
-    # plot before and after zoom-in
-    plt.plot(lo, label='Low Current')
-    plt.plot(hi, label='High Current', ls='None', marker='.', ms=4)
-    plt.ylim(2.5, 3)
-    plt.legend()
-    plt.savefig(f"data/output/debiase_hi/{element}_{side}_{channel}_zoom_0.png")
-    plt.close()
-
-    plt.plot(x, lo, label='Low Current')
-    plt.plot(x, debiased_hi, label='Debiased High Current', ls='None', marker='.', ms=4)
-    plt.legend()
-    plt.ylim(2.5, 3)
-    plt.savefig(f"data/output/debiase_hi/{element}_{side}_{channel}_zoom_1.png")
-    plt.close()
-
-    for i in range(0, len(debiased_hi), 10000):
-        plt.plot(x[i:i+10000], lo[i:i+10000], label='Low Current')
-        plt.plot(x[i:i+10000], hi[i:i+10000],
-                 label='High Current', ls='None', marker='.', ms=4)
-        plt.legend()
-        plt.savefig(f"data/output/debiase_hi/{element}_{side}_{channel}_timeseries/{i}_0.png")
-        plt.close()
-
-        plt.plot(x[i:i+10000], lo[i:i+10000], label='Low Current')
-        plt.plot(x[i:i+10000], debiased_hi[i:i+10000],
-                 label='Debiased High Current', ls='None', marker='.', ms=4)
-        plt.legend()
-        plt.savefig(f"data/output/debiase_hi/{element}_{side}_{channel}_timeseries/{i}_1.png")
-        plt.close()
+            plt.plot(x[i:i+10000], lo[i:i+10000], label='Low Current')
+            plt.plot(x[i:i+10000], debiased_hi[i:i+10000],
+                    label='Debiased High Current', ls='None', marker='.', ms=4)
+            plt.legend()
+            plt.savefig(f"data/output/debiase_hi/01_timeseries/{element}_{side}_{channel}_{i}_1.png")
+            plt.close()
+        print("Plotted check 1 -------------------------------------------------------------------")
 
     return debiased_hi

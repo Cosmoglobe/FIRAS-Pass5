@@ -166,7 +166,7 @@ for channel, channel_i in g.CHANNELS.items():
     xcal_pos = xcal_pos[sorted_indices]
     for element in elements:
         for side in sides:
-            print(f"Interpolating {element} temperatures for side {side.upper()}")
+            print(f"Interpolating {element} temperatures for side {side.upper()} -----------------")
             temps[f"{side}_hi_{element}"] = interpolators[f"{side}_hi_{element}"](
                 midpoint_time_s
             )
@@ -175,7 +175,10 @@ for channel, channel_i in g.CHANNELS.items():
             )
 
             # TODO: working on changing this to new de-biased temps
-            if element == "ical":
+            if element == "ical" or element == "xcal_cone":
+                if element == "xcal_cone":
+                    temps[f"{side}_hi_{element}"] = temps[f"{side}_hi_{element}"][xcal_pos == 1]
+                    temps[f"{side}_lo_{element}"] = temps[f"{side}_lo_{element}"][xcal_pos == 1]
                 print(f"Dividing {side.upper()} side ICAL temperatures into plateaus to try to de-bias them")
                 plateau_masks = stats.divide_plateaus(temps[f"{side}_hi_{element}"],
                                                       temps[f"{side}_lo_{element}"],
@@ -192,18 +195,11 @@ for channel, channel_i in g.CHANNELS.items():
                                                             channel, element, side,
                                                             sigma=1, plateau=i+1)
                     
-                beta = stats.selfheat_vs_temp(mu, std, avg_temp, std_temp)
+                beta = stats.selfheat_vs_temp(mu, std, avg_temp, std_temp, side)
                 temps[f"{side}_{element}"] = stats.debiase_hi(beta,
                                                              temps[f"{side}_hi_{element}"],
                                                              temps[f"{side}_lo_{element}"],
                                                              element, side, channel)
-
-            elif element == "xcal_cone":
-                    temps[f"{side}_hi_{element}"] = temps[f"{side}_hi_{element}"][xcal_pos == 1]
-                    temps[f"{side}_lo_{element}"] = temps[f"{side}_lo_{element}"][xcal_pos == 1]
-
-                    stats.fit_gaussian(temps[f"{side}_hi_{element}"], temps[f"{side}_lo_{element}"],
-                                       element, side, ngaussians=0, sigma=1)
 
             else:
                 # Vectorized temperature selection using the temps from the original pipeline       
@@ -214,10 +210,7 @@ for channel, channel_i in g.CHANNELS.items():
                     side,
                 )
 
-        if element == "ical":
-            all_data = (temps["a_ical"] * 0.1 + temps["b_ical"] * 0.9)  # from fex_grtcoawt.txt
-        else:
-            all_data = (temps[f"a_{element}"] + temps[f"b_{element}"]) / 2.0
+        all_data = (temps[f"a_{element}"] + temps[f"b_{element}"]) / 2.0
 
         # split back into cal and sky data
         cal_data[element] = all_data[xcal_pos == 1]
