@@ -11,6 +11,16 @@ from data import stats
 from engineering_timing.get_interpolated_times import get_data, get_interp
 from scipy.interpolate import interp1d
 
+# Pre-load plateau divides to avoid repeated file reads
+plateau_divides_cache = {}
+with open(f"data/plateau_divides.txt", "r") as f:
+    lines = f.readlines()
+    for line in lines:
+        parts = line.strip().split(" ")
+        if len(parts) >= 2:
+            name = parts[0]
+            plateau_divides_cache[name] = np.array(parts[1].split(",")).astype(float)
+
 # OPENING ORIGINAL DATA FILES
 fdq_sdf = h5py.File("/mn/stornext/d16/cmbco/ola/firas/initial_data/fdq_sdf_new.h5")
 fdq_eng = h5py.File("/mn/stornext/d16/cmbco/ola/firas/initial_data/fdq_eng_new.h5")
@@ -142,7 +152,7 @@ for channel, channel_i in g.CHANNELS.items():
 
     # the next table to reproduce needs the ICAL temperatures so we need to match them now
     # Interpolate temperatures for sky data
-    elements = ["ical", "dihedral", "refhorn", "skyhorn", "xcal_cone"]
+    elements = ["ical", "xcal_cone", "refhorn", "skyhorn", "dihedral", "collimator"]
     sides = ["a", "b"]
 
     print(f"Testing new way for de-biasing temperatures for ICAL and using the previous one for the rest")
@@ -166,6 +176,8 @@ for channel, channel_i in g.CHANNELS.items():
     xcal_pos = xcal_pos[sorted_indices]
     for element in elements:
         for side in sides:
+            if element == "collimator" and side == "b":
+                continue
             print(f"Interpolating {element} temperatures for side {side.upper()} -----------------")
             temps[f"{side}_hi_{element}"] = interpolators[f"{side}_hi_{element}"](
                 midpoint_time_s
@@ -175,70 +187,75 @@ for channel, channel_i in g.CHANNELS.items():
             )
 
             # TODO: working on changing this to new de-biased temps
-            if element == "ical" or element == "xcal_cone":
-                if element == "xcal_cone":
-                    temps[f"{side}_hi_{element}"] = temps[f"{side}_hi_{element}"][xcal_pos == 1]
-                    temps[f"{side}_lo_{element}"] = temps[f"{side}_lo_{element}"][xcal_pos == 1]
-                print(f"Dividing {side.upper()} side ICAL temperatures into plateaus to try to de-bias them")
-                plateau_masks = stats.divide_plateaus(temps[f"{side}_hi_{element}"],
-                                                      temps[f"{side}_lo_{element}"],
-                                                      channel, element, side)
+            # if element == "ical" or element == "xcal_cone":
+            if element == "xcal_cone":
+                temps[f"{side}_hi_{element}"] = temps[f"{side}_hi_{element}"][xcal_pos == 1]
+                temps[f"{side}_lo_{element}"] = temps[f"{side}_lo_{element}"][xcal_pos == 1]
+            print(f"Dividing {side.upper()} side ICAL temperatures into plateaus to try to de-bias them")
+            plateau_masks = stats.divide_plateaus(temps[f"{side}_lo_{element}"],
+                                                    channel, element, side, plateau_divides_cache)
 
-                mu = np.zeros(len(plateau_masks))
-                std = np.zeros(len(plateau_masks))
-                avg_temp = np.zeros(len(plateau_masks))
-                std_temp = np.zeros(len(plateau_masks))
+            mu = np.zeros(len(plateau_masks))
+            mu_err = np.zeros(len(plateau_masks))
+            avg_temp = np.zeros(len(plateau_masks))
+            temp_err = np.zeros(len(plateau_masks))
 
-                for i, mask in enumerate(plateau_masks):
-                    mu[i], std[i], avg_temp[i], std_temp[i] = stats.fit_gaussian(temps[f"{side}_hi_{element}"][mask],
-                                                            temps[f"{side}_lo_{element}"][mask],
-                                                            channel, element, side,
-                                                            sigma=1, plateau=i+1)
-                    
-                beta = stats.selfheat_vs_temp(mu, std, avg_temp, std_temp, side)
-                temps[f"{side}_{element}"] = stats.debiase_hi(beta,
-                                                             temps[f"{side}_hi_{element}"],
-                                                             temps[f"{side}_lo_{element}"],
-                                                             element, side, channel)
+            for i, mask in enumerate(plateau_masks):
+                mu[i], mu_err[i], avg_temp[i], temp_err[i] = stats.fit_gaussian(temps[f"{side}_hi_{element}"][mask],
+                                                        temps[f"{side}_lo_{element}"][mask],
+                                                        channel, element, side,
+                                                        sigma=1, plateau=i+1)
+                
+            beta = stats.selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side)
+            temps[f"{side}_{element}"] = stats.debiase_hi(beta,
+                                                            temps[f"{side}_hi_{element}"],
+                                                            temps[f"{side}_lo_{element}"],
+                                                            element, side, channel)
 
-            else:
-                # Vectorized temperature selection using the temps from the original pipeline       
-                temps[f"{side}_{element}"] = data_utils.get_temperature_hl_vectorized(
-                    temps[f"{side}_lo_{element}"],
-                    temps[f"{side}_hi_{element}"],
-                    element,
-                    side,
-                )
+            # else:
+            #     # Vectorized temperature selection using the temps from the original pipeline       
+            #     temps[f"{side}_{element}"] = data_utils.get_temperature_hl_vectorized(
+            #         temps[f"{side}_lo_{element}"],
+            #         temps[f"{side}_hi_{element}"],
+            #         element,
+            #         side,
+            #     )
 
-        all_data = (temps[f"a_{element}"] + temps[f"b_{element}"]) / 2.0
+        if element == "collimator":
+            all_data[element] = temps[f"a_{element}"]
+        else:
+            all_data[element] = (temps[f"a_{element}"] + temps[f"b_{element}"]) / 2.0
 
-        # split back into cal and sky data
-        cal_data[element] = all_data[xcal_pos == 1]
-        sky_data[element] = all_data[xcal_pos == 2]
+        if element == "xcal_cone":
+            cal_data[element] = all_data[element]
+        else:
+            # split back into cal and sky data
+            cal_data[element] = all_data[element][xcal_pos == 1]
+            sky_data[element] = all_data[element][xcal_pos == 2]
 
-    collimator_hi = interpolators["a_hi_collimator"](midpoint_time_s)
-    collimator_lo = interpolators["a_lo_collimator"](midpoint_time_s)
-    all_data = ((collimator_hi + collimator_lo) / 2.0)
+    # collimator_hi = interpolators["a_hi_collimator"](midpoint_time_s)
+    # collimator_lo = interpolators["a_lo_collimator"](midpoint_time_s)
+    # all_data = ((collimator_hi + collimator_lo) / 2.0)
 
-    cal_data["collimator"] = all_data[xcal_pos == 1]
-    sky_data["collimator"] = all_data[xcal_pos == 2]
+    # cal_data["collimator"] = all_data[xcal_pos == 1]
+    # sky_data["collimator"] = all_data[xcal_pos == 2]
 
     # collimator_hi = interpolators["a_hi_collimator"](sky_data["midpoint_time_s"])
     # collimator_lo = interpolators["a_lo_collimator"](sky_data["midpoint_time_s"])
     # sky_data["collimator"] = ((collimator_hi + collimator_lo) / 2.0)[temp_mask_sky["a"] & temp_mask_sky["b"]]
     # apply temp masks to cal and sky data except for elements and collimator
-    for key in cal_data:
-        if key not in elements and key != "collimator":
-            # print(f"DEBUG key: {key}. Shape before masking: cal_data {cal_data[key].shape}, sky_data {sky_data[key].shape}")
-            # Use concatenate with axis=0 for 2D arrays, append for 1D
-            if cal_data[key].ndim > 1:
-                all_data = np.concatenate([cal_data[key], sky_data[key]], axis=0)
-            else:
-                all_data = np.append(cal_data[key], sky_data[key])
-            all_data = all_data[sorted_indices]
-            all_data = all_data
-            cal_data[key] = all_data[xcal_pos == 1]
-            sky_data[key] = all_data[xcal_pos == 2]
+    # for key in cal_data:
+    #     if key not in elements and key != "collimator":
+    #         # print(f"DEBUG key: {key}. Shape before masking: cal_data {cal_data[key].shape}, sky_data {sky_data[key].shape}")
+    #         # Use concatenate with axis=0 for 2D arrays, append for 1D
+    #         if cal_data[key].ndim > 1:
+    #             all_data = np.concatenate([cal_data[key], sky_data[key]], axis=0)
+    #         else:
+    #             all_data = np.append(cal_data[key], sky_data[key])
+    #         all_data = all_data[sorted_indices]
+    #         all_data = all_data
+    #         cal_data[key] = all_data[xcal_pos == 1]
+    #         sky_data[key] = all_data[xcal_pos == 2]
             # print(f"DEBUG key: {key}. Shape after masking: cal_data {cal_data[key].shape}, sky_data {sky_data[key].shape}")
     (
         earth_limb,
@@ -520,20 +537,20 @@ for channel, channel_i in g.CHANNELS.items():
     for key in sky_data:
         sky_data[key] = sky_data[key][other_cuts == False]
 
-    interp_func = interp1d(eng_time_s, bol_volt)
-    cal_data["bol_volt"] = interp_func(cal_data["midpoint_time_s"])
-    sky_data["bol_volt"] = interp_func(sky_data["midpoint_time_s"])
+    # Using numpy interp is faster than scipy interp1d for single evaluations
+    cal_data["bol_volt"] = np.interp(cal_data["midpoint_time_s"], eng_time_s, bol_volt)
+    sky_data["bol_volt"] = np.interp(sky_data["midpoint_time_s"], eng_time_s, bol_volt)
 
     # no high cuirrent readings for bolometers
     a_lo_bol_assem = grt["a_lo_bol_assem"][:, channel_i]
     b_lo_bol_assem = grt["b_lo_bol_assem"][:, channel_i]
     bol_assem = (a_lo_bol_assem + b_lo_bol_assem) / 2.0
-    interp_func = interp1d(eng_time_s, bol_assem)
-    cal_data["bolometer"] = interp_func(cal_data["midpoint_time_s"])
+    # Using numpy interp is faster than scipy interp1d for single evaluations
+    cal_data["bolometer"] = np.interp(cal_data["midpoint_time_s"], eng_time_s, bol_assem)
     bad_bolometer = cal_data["bolometer"] <= 0.0
     for key in cal_data:
         cal_data[key] = cal_data[key][bad_bolometer == False]
-    sky_data["bolometer"] = interp_func(sky_data["midpoint_time_s"])
+    sky_data["bolometer"] = np.interp(sky_data["midpoint_time_s"], eng_time_s, bol_assem)
     bad_bolometer = sky_data["bolometer"] <= 0.0
     print(f"    Bad Bolometer Temperature Readings: {bad_bolometer.sum()}")
     for key in sky_data:
