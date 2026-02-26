@@ -258,7 +258,7 @@ def _plot_timeseries_chunk(args):
             plt.plot(x[mask[x]], lo[x][mask[x]], label=f'Plateau {j+1}', ls='None', marker='.',
                      ms=4, color=f"C{j}")
     plt.legend()
-    plt.savefig(f"data/output/divide_plateaus/02_chunks_over_time_{channel}/{element}/{side}_{i}.png")
+    plt.savefig(f"data/output/divide_plateaus/01_chunks_over_time_{channel}/{element}/{side}/{i}.png")
     plt.close()
 
 
@@ -298,13 +298,6 @@ def divide_plateaus(lo, channel, element, side, plateau_divides_cache=None, n_co
 
         if g.VERBOSE > 2:
             print(f"Plateau {i} ({min} to {divide}): {len(lo[plateau]) / len(lo) * 100:.2f}% of the data")
-            plt.hist(lo[plateau], bins=np.arange(min, divide, 0.001))
-            plt.xlabel(f"Low Current {channel.upper()} ({side.upper()} side) for {element} - Plateau {i}")
-            plt.ylabel("Counts")
-            plt.savefig(f"data/output/divide_plateaus/01_plateau_{channel}/{element}/{side}_{i}.png")
-            plt.close()
-    if g.VERBOSE > 2:
-        print("Plotted check 1 -----------------------------------------------------------------------")
 
     # plot the whole temperature over time and color the points by plateau
     # plot for each 100000 points to see better - parallelized
@@ -318,7 +311,7 @@ def divide_plateaus(lo, channel, element, side, plateau_divides_cache=None, n_co
     if g.VERBOSE > 2:
         with Pool(processes=n_cores) as pool:
             pool.map(_plot_timeseries_chunk, args_list)
-        print("Plotted check 2 -----------------------------------------------------------------------")
+        print("Plotted check 1 -----------------------------------------------------------------------")
 
     # plot timeseries of only the points in the first plateau to see if there are more to split
     if g.VERBOSE > 2:
@@ -327,9 +320,9 @@ def divide_plateaus(lo, channel, element, side, plateau_divides_cache=None, n_co
             plt.xlabel("Record Index")
             plt.ylabel("Temperature (K)")
             plt.title(f"Low Current Over Time for {element} ({side.upper()}) - {channel.upper()}")
-            plt.savefig(f"data/output/divide_plateaus/03_plateaus_over_time_{channel}/{element}/{side}_{i+1}.png")
+            plt.savefig(f"data/output/divide_plateaus/02_plateaus_over_time_{channel}/{element}/{side}_{i+1}.png")
             plt.close()
-        print("Plotted check 3 -----------------------------------------------------------------------")
+        print("Plotted check 2 -----------------------------------------------------------------------")
 
     return plateau_masks
 
@@ -547,14 +540,14 @@ def debiase_hi(beta, hi, lo, element, side, channel):
             plt.plot(x[i:i+xsize], hi[i:i+xsize],
                     label='High Current', ls='None', marker='.', ms=4)
             plt.legend()
-            plt.savefig(f"data/output/debiase_hi/01_timeseries/{element}/{side}_{channel}_{i}_0.png")
+            plt.savefig(f"data/output/debiase_hi/01_timeseries/{element}/{side}/{channel}_{i}_0.png")
             plt.close()
 
             plt.plot(x[i:i+xsize], lo[i:i+xsize], label='Low Current')
             plt.plot(x[i:i+xsize], debiased_hi[i:i+xsize],
                     label='Debiased High Current', ls='None', marker='.', ms=4)
             plt.legend()
-            plt.savefig(f"data/output/debiase_hi/01_timeseries/{element}/{side}_{channel}_{i}_1.png")
+            plt.savefig(f"data/output/debiase_hi/01_timeseries/{element}/{side}/{channel}_{i}_1.png")
             plt.close()
         print("Plotted check 1 -------------------------------------------------------------------")
 
