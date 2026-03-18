@@ -3,6 +3,7 @@ import matplotlib
 import scipy.odr as odr
 
 matplotlib.use('Agg')  # Use non-interactive backend for multiprocessing
+import os
 from functools import partial
 from multiprocessing import Pool
 
@@ -11,6 +12,12 @@ import numpy as np
 from matplotlib import markers
 from scipy.stats import norm
 
+element_long_names = {
+    "ical": "Internal Calibrator",
+    "xcal_cone": "External Calibrator Cone",
+    "refhorn": "Reference Horn",
+    "skyhorn": "Sky Horn",
+    }
 
 def table3_4(xcal_pos, mtm_length, mtm_speed):
     """Compute and print scan mode statistics as in table 3.4 of the FIRAS Explanatory Supplement."""
@@ -249,31 +256,29 @@ def _plot_timeseries_chunk(args):
         xsize = 10000
 
     x = np.arange(i, min(i + xsize, len(lo)))
-    plt.figure(figsize=(12, 6))
-    plt.xlabel("Record Index")
-    plt.ylabel("Temperature (K)")
-    plt.title(f"Detector Temperatures Over Time for {element} ({side.upper()}) - {channel.upper()}")
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.set_xlabel("Record Index")
+    ax.set_ylabel("Temperature (K)")
+    ax.set_title(f"Detector Temperatures Over Time for {element} ({side.upper()}) - {channel.upper()}")
     for j, mask in enumerate(plateau_masks):
-        if lo[x][mask[x]].size > 0:
-            plt.plot(x[mask[x]], lo[x][mask[x]], label=f'Plateau {j+1}', ls='None', marker='.',
+        mask_slice = mask[x]
+        if np.any(mask_slice):
+            ax.plot(x[mask_slice], lo[x][mask_slice], label=f'Plateau {j+1}', ls='None', marker='.',
                      ms=4, color=f"C{j}")
-    plt.legend()
-    plt.savefig(f"data/output/divide_plateaus/01_chunks_over_time_{channel}/{element}/{side}/{i}.png")
-    plt.close()
+    ax.legend()
+    fig.savefig(f"data/output/divide_plateaus/01_chunks_over_time_{channel}/{element}/{side}/{i}.png")
+    plt.close(fig)
 
 
-def divide_plateaus(lo, channel, element, side, plateau_divides_cache=None, n_cores=12):
+def divide_plateaus(lo, channel, element, side, plateau_divides_cache=None, n_cores=None):
     """
     Divide each of the temperatures into their different plateaus so we can find only one Gaussian
     for each.
     """
+    if n_cores is None:
+        n_cores = max(1, os.cpu_count() - 2)  # Leave 2 cores free
 
     print(f"Minimum and maximum low current {channel} ({side.upper()} side) for {element}: {lo.min():.3f}, {lo.max():.3f}")
-
-    # plt.hist(lo, bins=np.arange(1.5, 25, 0.001))
-    # plt.xlabel(f"Low Current {channel.upper()} ({side.upper()} side) for {element}")
-    # plt.savefig(f"data/output/divide_plateaus/01_lo_{element}_{channel}/{side}.png")
-    # plt.close()
 
     # Use cached plateau divides if available, otherwise read from file
     if plateau_divides_cache is not None and f"{element}_{side}" in plateau_divides_cache:
@@ -288,16 +293,14 @@ def divide_plateaus(lo, channel, element, side, plateau_divides_cache=None, n_co
                     break
 
     plateau_masks = []
-    for i, divide in enumerate(plateau_divides):
-        if i == 0:
-            continue
-        else:
-            plateau = (lo >= plateau_divides[i-1]) & (lo < divide)
-            min = plateau_divides[i-1]
+    for i in range(1, len(plateau_divides)):
+        plateau = (lo >= plateau_divides[i-1]) & (lo < plateau_divides[i])
         plateau_masks.append(plateau)
 
         if g.VERBOSE > 2:
-            print(f"Plateau {i} ({min} to {divide}): {len(lo[plateau]) / len(lo) * 100:.2f}% of the data")
+            min_val = plateau_divides[i-1]
+            divide = plateau_divides[i]
+            print(f"Plateau {i} ({min_val} to {divide}): {np.sum(plateau) / len(lo) * 100:.2f}% of the data")
 
     # plot the whole temperature over time and color the points by plateau
     # plot for each 100000 points to see better - parallelized
@@ -329,20 +332,20 @@ def divide_plateaus(lo, channel, element, side, plateau_divides_cache=None, n_co
 
 def fit_gaussian(hi, lo, channel, element, side, sigma=3, plateau=0):
     """Fit a Gaussian to the difference between hi and lo temperatures."""
-    # fit a gaussian to the input temperatures?
     if g.VERBOSE > 1:
         print("Starting fit_gaussian -------------------------------------------------------------")
 
+    # Vectorized statistics
+    n = len(hi)
     avg_temp = np.mean(hi)
-    std_temp = np.std(hi)
-    temp_err = std_temp / np.sqrt(len(hi))
+    std_temp = np.std(hi, ddof=1)  # Use ddof=1 for sample std
+    temp_err = std_temp / np.sqrt(n)
 
     diff = hi - lo
-    # print(f"Minimum and maximum difference: {diff.min():.3f}, {diff.max():.3f}")
 
     # fit the normal distribution to the data
     mu, std = norm.fit(diff, loc=0.015, scale=0.005)
-    mu_err = std / np.sqrt(len(diff))  # Standard error of the mean
+    mu_err = std / np.sqrt(n)  # Standard error of the mean
 
     # set up plot
     if g.VERBOSE > 2:
@@ -442,13 +445,22 @@ def double_power_law(beta, x):
     return A1 * x**(alpha1) + A2 * x**(alpha2)
 
 def electronics_model(beta, x):
-    A1 = beta[0]
-    T_knee = beta[1]
-    A2 = beta[2]
+    # A1 = beta[0]
+    # T_knee1 = beta[0]
+    # # A2 = beta[2]
+    # alpha = beta[1]
+    # T_knee2 = beta[4]
+    # # level = beta[5]
+    # level = beta[4]
+    level = beta[0]
+    T_knee1 = beta[1]
+    T_knee2 = beta[2]
     alpha = beta[3]
-    level = beta[4]
 
-    return A1 * T_knee / x ** 2 + A2 * np.exp(x * alpha) + level
+    # self%xi_n(SIGMA0)**2 * (1. + (nu/self%xi_n(FKNEE))**self%xi_n(ALPHA) + (nu/self%xi_n(FKNEE2))**self%xi_n(ALPHA2))
+
+    return level * (1 + (T_knee1 / x) ** 2 + (x / T_knee2) ** alpha)
+    # return A1 * T_knee1 / x ** 2 + A2 * np.exp(x * alpha) + level
 
 
 def selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side):
@@ -491,7 +503,8 @@ def selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side):
     print(f"Residual variance for double power law: {odr_result_double_power.res_var:.3f}")
 
     model = odr.Model(electronics_model)
-    odr_obj = odr.ODR(data, model, beta0=[1.0, 6.0, 1.0, -1.0, 0.0])
+    # odr_obj = odr.ODR(data, model, beta0=[1.0, 4.0, 1.0, -1.0, 4.0, 0.0])
+    odr_obj = odr.ODR(data, model, beta0=[1, 4, 6, 0])
     odr_result_electronics = odr_obj.run()
     print(f"Residual variance for electronics model: {odr_result_electronics.res_var:.3f}")
 
@@ -512,13 +525,11 @@ def selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side):
     
 def debiase_hi(beta, hi, lo, element, side, channel):
     """Debiase the high temperature using the fitted Gaussian parameters."""
+
     if g.VERBOSE > 1:
         print("Starting debiase_hi ---------------------------------------------------------------")
-    # diff = hi - lo
-    debiased_hi = np.copy(hi)
-
-    # Debias using the fitted negative exponential model
-    # debiased_hi = hi - negative_exponential(beta, hi)
+    
+    # Vectorized debiasing - no copying needed
     debiased_hi = hi - electronics_model(beta, hi)
 
     # mask1 = (diff > mu - sigma*std) & (diff < mu + sigma*std)
@@ -528,10 +539,7 @@ def debiase_hi(beta, hi, lo, element, side, channel):
     # mask2 = (diff > mu2 - sigma*std2) & (diff < mu2 + sigma*std2)
     # debiased_hi[mask2] = hi[mask2] - mu2
 
-    if element == "xcal_cone":
-        xsize = 1000
-    else:
-        xsize = 10000
+    xsize = 1000 if element == "xcal_cone" else 10000
 
     if g.VERBOSE > 2:
         x = np.arange(len(hi))
@@ -539,6 +547,10 @@ def debiase_hi(beta, hi, lo, element, side, channel):
             plt.plot(x[i:i+xsize], lo[i:i+xsize], label='Low Current')
             plt.plot(x[i:i+xsize], hi[i:i+xsize],
                     label='High Current', ls='None', marker='.', ms=4)
+            
+            plt.ylabel("Temperature (K)")
+            plt.xlabel("Record Index")
+            plt.title(f"Temperatures measured for the {element_long_names[element]}")
             plt.legend()
             plt.savefig(f"data/output/debiase_hi/01_timeseries/{element}/{side}/{channel}_{i}_0.png")
             plt.close()
@@ -546,6 +558,10 @@ def debiase_hi(beta, hi, lo, element, side, channel):
             plt.plot(x[i:i+xsize], lo[i:i+xsize], label='Low Current')
             plt.plot(x[i:i+xsize], debiased_hi[i:i+xsize],
                     label='Debiased High Current', ls='None', marker='.', ms=4)
+            
+            plt.ylabel("Temperature (K)")
+            plt.xlabel("Record Index")
+            plt.title(f"Temperatures measured for the {element_long_names[element]}")
             plt.legend()
             plt.savefig(f"data/output/debiase_hi/01_timeseries/{element}/{side}/{channel}_{i}_1.png")
             plt.close()

@@ -6,10 +6,20 @@ import astropy.units as u
 import data.utils.my_utils as data_utils
 import globals as g
 import h5py
+import matplotlib
+
+matplotlib.use('Agg')  # Use non-interactive backend
+import os
+import time
+from functools import partial
+from multiprocessing import Pool
+
+import matplotlib.pyplot as plt
 import numpy as np
 from data import stats
 from engineering_timing.get_interpolated_times import get_data, get_interp
-from scipy.interpolate import interp1d
+
+start_time = time.time()
 
 # Pre-load plateau divides to avoid repeated file reads
 plateau_divides_cache = {}
@@ -22,8 +32,8 @@ with open(f"data/plateau_divides.txt", "r") as f:
             plateau_divides_cache[name] = np.array(parts[1].split(",")).astype(float)
 
 # OPENING ORIGINAL DATA FILES
-fdq_sdf = h5py.File("/mn/stornext/d16/cmbco/ola/firas/initial_data/fdq_sdf_new.h5")
-fdq_eng = h5py.File("/mn/stornext/d16/cmbco/ola/firas/initial_data/fdq_eng_new.h5")
+fdq_sdf = h5py.File("/mn/stornext/d16/cmbco/ola/firas/initial_data/fdq_sdf_new.h5", "r")
+fdq_eng = h5py.File("/mn/stornext/d16/cmbco/ola/firas/initial_data/fdq_eng_new.h5", "r")
 
 # Longitudes and latitudes are stored in radians*1e4
 fact = 180.0 / np.pi / 1e4
@@ -66,7 +76,6 @@ for channel, channel_i in g.CHANNELS.items():
     all_data = {}
 
     sci_head = science_data["sci_head"]
-    # all_data["gain"] = data_utils.convert_gain_array(sci_head["gain"][:])
     all_data["mtm_speed"] = sci_head["mtm_speed"][:]
     all_data["mtm_length"] = sci_head["mtm_length"][:]
     all_data["upmode"] = sci_head["sc_head1a"][:]
@@ -85,12 +94,8 @@ for channel, channel_i in g.CHANNELS.items():
 
     collect_time = science_data["collect_time"]
     all_data["midpoint_time"] = np.sort(collect_time["midpoint_time"][:])
-    all_data["midpoint_time_s"] = (collect_time["midpoint_time"][:] * (100 * u.ns)).to(
-        "s"
-    )
-    all_data["midpoint_time_gmt"] = data_utils.binary_to_gmt(
-        collect_time["midpoint_time"][:]
-    )
+    all_data["midpoint_time_s"] = (collect_time["midpoint_time"][:] * (100 * u.ns)).to("s")
+    all_data["midpoint_time_gmt"] = data_utils.binary_to_gmt(collect_time["midpoint_time"][:])
 
     attitude = science_data["attitude"]
     all_data["cel_lon"] = attitude["ra"][:] * fact
@@ -121,9 +126,12 @@ for channel, channel_i in g.CHANNELS.items():
 
     cal_data = {}
     sky_data = {}
+    # Optimized: split data using vectorized indexing
+    cal_mask = all_data["xcal_pos"] == 1
+    sky_mask = all_data["xcal_pos"] == 2
     for key in all_data:
-        cal_data[key] = all_data[key][all_data["xcal_pos"] == 1]
-        sky_data[key] = all_data[key][all_data["xcal_pos"] == 2]
+        cal_data[key] = all_data[key][cal_mask]
+        sky_data[key] = all_data[key][sky_mask]
 
     (
         cal_saturated,
@@ -142,13 +150,13 @@ for channel, channel_i in g.CHANNELS.items():
         sky_data["solution"],
     )
 
-    # TODO: unclear what they consider a glitch rate too high, check IFGs marked with that?
-    cal_cuts = cal_saturated | cal_sw | cal_glitch_rate
-    sky_cuts = sky_saturated | sky_sw | sky_glitch_rate | limb | no_solution
+    # Combine cuts before applying
+    cal_cuts = ~(cal_saturated | cal_sw | cal_glitch_rate)
+    sky_cuts = ~(sky_saturated | sky_sw | sky_glitch_rate | limb | no_solution)
 
     for key in all_data:
-        cal_data[key] = cal_data[key][cal_cuts == False]
-        sky_data[key] = sky_data[key][sky_cuts == False]
+        cal_data[key] = cal_data[key][cal_cuts]
+        sky_data[key] = sky_data[key][sky_cuts]
 
     # the next table to reproduce needs the ICAL temperatures so we need to match them now
     # Interpolate temperatures for sky data
@@ -158,53 +166,51 @@ for channel, channel_i in g.CHANNELS.items():
     print(f"Testing new way for de-biasing temperatures for ICAL and using the previous one for the rest")
     print(f"Taking the average of both sides")
     temps = {}
-    temp_mask = {}
 
-    # join calibration and sky times for interpolation
-    print("Joining calibration and sky times for interpolation")
-    midpoint_time_s = np.append(
-        cal_data["midpoint_time_s"], sky_data["midpoint_time_s"]
-    )
-    xcal_pos = np.append(
-        cal_data["xcal_pos"], sky_data["xcal_pos"]
-    )
-
-    # order the times and keep track of the original indices
-    print("Ordering the times and keeping track of the original indices")
+    # join calibration and sky times for interpolation (optimized)
+    print("Joining and sorting calibration and sky times for interpolation")
+    midpoint_time_s = np.concatenate([cal_data["midpoint_time_s"], sky_data["midpoint_time_s"]])
+    xcal_pos = np.concatenate([cal_data["xcal_pos"], sky_data["xcal_pos"]])
+    
     sorted_indices = np.argsort(midpoint_time_s)
     midpoint_time_s = midpoint_time_s[sorted_indices]
     xcal_pos = xcal_pos[sorted_indices]
+    
+    # Batch interpolatetemperatures for all elements and sides
+    print("Batch interpolating temperatures...")
     for element in elements:
         for side in sides:
             if element == "collimator" and side == "b":
                 continue
             print(f"Interpolating {element} temperatures for side {side.upper()} -----------------")
-            temps[f"{side}_hi_{element}"] = interpolators[f"{side}_hi_{element}"](
-                midpoint_time_s
-            )
-            temps[f"{side}_lo_{element}"] = interpolators[f"{side}_lo_{element}"](
-                midpoint_time_s
-            )
+            temps[f"{side}_hi_{element}"] = interpolators[f"{side}_hi_{element}"](midpoint_time_s)
+            temps[f"{side}_lo_{element}"] = interpolators[f"{side}_lo_{element}"](midpoint_time_s)
 
             # TODO: working on changing this to new de-biased temps
             # if element == "ical" or element == "xcal_cone":
             if element == "xcal_cone":
-                temps[f"{side}_hi_{element}"] = temps[f"{side}_hi_{element}"][xcal_pos == 1]
-                temps[f"{side}_lo_{element}"] = temps[f"{side}_lo_{element}"][xcal_pos == 1]
+                xcal_mask = xcal_pos == 1
+                temps[f"{side}_hi_{element}"] = temps[f"{side}_hi_{element}"][xcal_mask]
+                temps[f"{side}_lo_{element}"] = temps[f"{side}_lo_{element}"][xcal_mask]
+            
             print(f"Dividing {side.upper()} side ICAL temperatures into plateaus to try to de-bias them")
             plateau_masks = stats.divide_plateaus(temps[f"{side}_lo_{element}"],
                                                     channel, element, side, plateau_divides_cache)
 
-            mu = np.zeros(len(plateau_masks))
-            mu_err = np.zeros(len(plateau_masks))
-            avg_temp = np.zeros(len(plateau_masks))
-            temp_err = np.zeros(len(plateau_masks))
+            n_plateaus = len(plateau_masks)
+            mu = np.zeros(n_plateaus)
+            mu_err = np.zeros(n_plateaus)
+            avg_temp = np.zeros(n_plateaus)
+            temp_err = np.zeros(n_plateaus)
 
+            # Fit gaussians for each plateau
             for i, mask in enumerate(plateau_masks):
-                mu[i], mu_err[i], avg_temp[i], temp_err[i] = stats.fit_gaussian(temps[f"{side}_hi_{element}"][mask],
-                                                        temps[f"{side}_lo_{element}"][mask],
-                                                        channel, element, side,
-                                                        sigma=1, plateau=i+1)
+                mu[i], mu_err[i], avg_temp[i], temp_err[i] = stats.fit_gaussian(
+                    temps[f"{side}_hi_{element}"][mask],
+                    temps[f"{side}_lo_{element}"][mask],
+                    channel, element, side,
+                    sigma=1, plateau=i+1)
+                plt.errorbar(avg_temp[i], mu[i], xerr=temp_err[i], yerr=mu_err[i], fmt='o')
                 
             beta = stats.selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side)
             temps[f"{side}_{element}"] = stats.debiase_hi(beta,
@@ -232,6 +238,10 @@ for channel, channel_i in g.CHANNELS.items():
             # split back into cal and sky data
             cal_data[element] = all_data[element][xcal_pos == 1]
             sky_data[element] = all_data[element][xcal_pos == 2]
+
+    # plot all of the points
+    plt.savefig('data/output/all_points.png')
+    plt.close()
 
     # collimator_hi = interpolators["a_hi_collimator"](midpoint_time_s)
     # collimator_lo = interpolators["a_lo_collimator"](midpoint_time_s)
@@ -290,7 +300,7 @@ for channel, channel_i in g.CHANNELS.items():
         # | dihedral_temp_sky
     )
     for key in sky_data:
-        sky_data[key] = sky_data[key][sky_cuts == False]
+        sky_data[key] = sky_data[key][sky_cuts]
 
     # engineering data based on channels
     bol_cmd_bias = en_stat["bol_cmd_bias"][:, channel_i]
@@ -303,43 +313,25 @@ for channel, channel_i in g.CHANNELS.items():
     eng_mtm_length = chan["xmit_mtm_len"][:, channel_i]
     eng_gain = chan["sci_gain"][:, channel_i].astype(int)
 
-    # Find two nearest engineering times for each science time using searchsorted
-    # This assumes eng_time is sorted (which it should be)
-    # Use searchsorted to find insertion indices
+    # Helper function to find nearest neighbors - optimized
+    def find_nearest_neighbors(times_gmt, eng_time_gmt):
+        """Find two nearest engineering time neighbors for each science time."""
+        indices = np.searchsorted(eng_time_gmt, times_gmt)
+        indices = np.clip(indices, 1, len(eng_time_gmt) - 1)
+        
+        idx_before = indices - 1
+        idx_after = indices
+        
+        dist_before = np.abs(times_gmt - eng_time_gmt[idx_before])
+        dist_after = np.abs(times_gmt - eng_time_gmt[idx_after])
+        
+        idx0 = np.where(dist_before <= dist_after, idx_before, idx_after)
+        idx1 = np.where(dist_before <= dist_after, idx_after, idx_before)
+        return idx0, idx1
 
-    # cal data
-    indices = np.searchsorted(eng_time_gmt, cal_data["midpoint_time_gmt"])
-    # Clip indices to valid range
-    indices = np.clip(indices, 1, len(eng_time_gmt) - 1)
-
-    # Get the two nearest neighbors (before and after)
-    idx_before = indices - 1
-    idx_after = indices
-
-    # Calculate distances to both neighbors
-    dist_before = np.abs(cal_data["midpoint_time_gmt"] - eng_time_gmt[idx_before])
-    dist_after = np.abs(cal_data["midpoint_time_gmt"] - eng_time_gmt[idx_after])
-
-    # Get indices of the two closest points
-    idx0_cal = np.where(dist_before <= dist_after, idx_before, idx_after)
-    idx1_cal = np.where(dist_before <= dist_after, idx_after, idx_before)
-
-    # sky data
-    indices = np.searchsorted(eng_time_gmt, sky_data["midpoint_time_gmt"])
-    # Clip indices to valid range
-    indices = np.clip(indices, 1, len(eng_time_gmt) - 1)
-
-    # Get the two nearest neighbors (before and after)
-    idx_before = indices - 1
-    idx_after = indices
-
-    # Calculate distances to both neighbors
-    dist_before = np.abs(sky_data["midpoint_time_gmt"] - eng_time_gmt[idx_before])
-    dist_after = np.abs(sky_data["midpoint_time_gmt"] - eng_time_gmt[idx_after])
-
-    # Get indices of the two closest points
-    idx0_sky = np.where(dist_before <= dist_after, idx_before, idx_after)
-    idx1_sky = np.where(dist_before <= dist_after, idx_after, idx_before)
+    # Find nearest neighbors for both cal and sky data
+    idx0_cal, idx1_cal = find_nearest_neighbors(cal_data["midpoint_time_gmt"], eng_time_gmt)
+    idx0_sky, idx1_sky = find_nearest_neighbors(sky_data["midpoint_time_gmt"], eng_time_gmt)
 
     print("\nOther data cuts")
 
@@ -377,43 +369,27 @@ for channel, channel_i in g.CHANNELS.items():
     )
     cal_data["gain"] = np.where(~gain_mismatch_cal, eng_gain[idx0_cal], np.nan)
 
-    sw1_mismatch_cal = stat_word_1[idx0_cal] != stat_word_1[idx1_cal]
-    sw4_mismatch_cal = stat_word_4[idx0_cal] != stat_word_4[idx1_cal]
-    sw5_mismatch_cal = stat_word_5[idx0_cal] != stat_word_5[idx1_cal]
-    sw8_mismatch_cal = stat_word_8[idx0_cal] != stat_word_8[idx1_cal]
-    sw9_mismatch_cal = stat_word_9[idx0_cal] != stat_word_9[idx1_cal]
-    sw12_mismatch_cal = stat_word_12[idx0_cal] != stat_word_12[idx1_cal]
-    sw13_mismatch_cal = stat_word_13[idx0_cal] != stat_word_13[idx1_cal]
-    sw16_mismatch_cal = stat_word_16[idx0_cal] != stat_word_16[idx1_cal]
-    lvdt_stat_a_mismatch_cal = lvdt_stat_a[idx0_cal] != lvdt_stat_a[idx1_cal]
-    lvdt_stat_b_mismatch_cal = lvdt_stat_b[idx0_cal] != lvdt_stat_b[idx1_cal]
-    cal_data["stat_word_1"] = np.where(~sw1_mismatch_cal, stat_word_1[idx0_cal], 0)
-    cal_data["stat_word_4"] = np.where(~sw4_mismatch_cal, stat_word_4[idx0_cal], 0)
-    cal_data["stat_word_5"] = np.where(~sw5_mismatch_cal, stat_word_5[idx0_cal], 0)
-    cal_data["stat_word_8"] = np.where(~sw8_mismatch_cal, stat_word_8[idx0_cal], 0)
-    cal_data["stat_word_9"] = np.where(~sw9_mismatch_cal, stat_word_9[idx0_cal], 0)
-    cal_data["stat_word_12"] = np.where(~sw12_mismatch_cal, stat_word_12[idx0_cal], 0)
-    cal_data["stat_word_13"] = np.where(~sw13_mismatch_cal, stat_word_13[idx0_cal], 0)
-    cal_data["stat_word_16"] = np.where(~sw16_mismatch_cal, stat_word_16[idx0_cal], 0)
-    cal_data["lvdt_stat_a"] = np.where(
-        ~lvdt_stat_a_mismatch_cal, lvdt_stat_a[idx0_cal], 0
-    )
-    cal_data["lvdt_stat_b"] = np.where(
-        ~lvdt_stat_b_mismatch_cal, lvdt_stat_b[idx0_cal], 0
-    )
-    sw_mismatches_cal = (
-        sw1_mismatch_cal
-        | sw4_mismatch_cal
-        | sw5_mismatch_cal
-        | sw8_mismatch_cal
-        | sw9_mismatch_cal
-        | sw12_mismatch_cal
-        | sw13_mismatch_cal
-        | sw16_mismatch_cal
-        | lvdt_stat_a_mismatch_cal
-        | lvdt_stat_b_mismatch_cal
-    )
-    other_cuts_cal = (
+    # Vectorized status word processing for calibration data
+    stat_words_cal = [
+        (stat_word_1, "stat_word_1"),
+        (stat_word_4, "stat_word_4"),
+        (stat_word_5, "stat_word_5"),
+        (stat_word_8, "stat_word_8"),
+        (stat_word_9, "stat_word_9"),
+        (stat_word_12, "stat_word_12"),
+        (stat_word_13, "stat_word_13"),
+        (stat_word_16, "stat_word_16"),
+        (lvdt_stat_a, "lvdt_stat_a"),
+        (lvdt_stat_b, "lvdt_stat_b"),
+    ]
+    
+    sw_mismatches_cal = np.zeros(len(idx0_cal), dtype=bool)
+    for stat_array, key in stat_words_cal:
+        mismatch = stat_array[idx0_cal] != stat_array[idx1_cal]
+        cal_data[key] = np.where(~mismatch, stat_array[idx0_cal], np.nan)
+        sw_mismatches_cal |= mismatch
+    
+    other_cuts_cal = ~(
         bol_cmd_bias_mismatch_cal
         | upmode_mismatch_cal
         | fakeit_mismatch_cal
@@ -425,7 +401,7 @@ for channel, channel_i in g.CHANNELS.items():
         | sw_mismatches_cal
     )
     for key in cal_data:
-        cal_data[key] = cal_data[key][other_cuts_cal == False]
+        cal_data[key] = cal_data[key][other_cuts_cal]
 
     # sky data
     # Check if the two closest values match
@@ -484,42 +460,15 @@ for channel, channel_i in g.CHANNELS.items():
     moon_contamination = sky_data["moon_angle"] <= 22.0
     print(f"    Moon Angle <= 22.0: {moon_contamination.sum()}")
 
-    # also the status words now
-    sw1_mismatch = stat_word_1[idx0_sky] != stat_word_1[idx1_sky]
-    sw4_mismatch = stat_word_4[idx0_sky] != stat_word_4[idx1_sky]
-    sw5_mismatch = stat_word_5[idx0_sky] != stat_word_5[idx1_sky]
-    sw8_mismatch = stat_word_8[idx0_sky] != stat_word_8[idx1_sky]
-    sw9_mismatch = stat_word_9[idx0_sky] != stat_word_9[idx1_sky]
-    sw12_mismatch = stat_word_12[idx0_sky] != stat_word_12[idx1_sky]
-    sw13_mismatch = stat_word_13[idx0_sky] != stat_word_13[idx1_sky]
-    sw16_mismatch = stat_word_16[idx0_sky] != stat_word_16[idx1_sky]
-    lvdt_stat_a_mismatch = lvdt_stat_a[idx0_sky] != lvdt_stat_a[idx1_sky]
-    lvdt_stat_b_mismatch = lvdt_stat_b[idx0_sky] != lvdt_stat_b[idx1_sky]
-    sky_data["stat_word_1"] = np.where(~sw1_mismatch, stat_word_1[idx0_sky], 0)
-    sky_data["stat_word_4"] = np.where(~sw4_mismatch, stat_word_4[idx0_sky], 0)
-    sky_data["stat_word_5"] = np.where(~sw5_mismatch, stat_word_5[idx0_sky], 0)
-    sky_data["stat_word_8"] = np.where(~sw8_mismatch, stat_word_8[idx0_sky], 0)
-    sky_data["stat_word_9"] = np.where(~sw9_mismatch, stat_word_9[idx0_sky], 0)
-    sky_data["stat_word_12"] = np.where(~sw12_mismatch, stat_word_12[idx0_sky], 0)
-    sky_data["stat_word_13"] = np.where(~sw13_mismatch, stat_word_13[idx0_sky], 0)
-    sky_data["stat_word_16"] = np.where(~sw16_mismatch, stat_word_16[idx0_sky], 0)
-    sky_data["lvdt_stat_a"] = np.where(~lvdt_stat_a_mismatch, lvdt_stat_a[idx0_sky], 0)
-    sky_data["lvdt_stat_b"] = np.where(~lvdt_stat_b_mismatch, lvdt_stat_b[idx0_sky], 0)
-    sw_mismatches = (
-        sw1_mismatch
-        | sw4_mismatch
-        | sw5_mismatch
-        | sw8_mismatch
-        | sw9_mismatch
-        | sw12_mismatch
-        | sw13_mismatch
-        | sw16_mismatch
-        | lvdt_stat_a_mismatch
-        | lvdt_stat_b_mismatch
-    )
+    # Vectorized status word processing for sky data
+    sw_mismatches = np.zeros(len(idx0_sky), dtype=bool)
+    for stat_array, key in stat_words_cal:  # Reuse the same list
+        mismatch = stat_array[idx0_sky] != stat_array[idx1_sky]
+        sky_data[key] = np.where(~mismatch, stat_array[idx0_sky], np.nan)
+        sw_mismatches |= mismatch
     print(f"    Status Word Mismatches: {sw_mismatches.sum()}")
 
-    other_cuts = (
+    other_cuts = ~(
         bol_cmd_bias_mismatch
         | upmode_mismatch
         | fakeit_mismatch
@@ -531,37 +480,47 @@ for channel, channel_i in g.CHANNELS.items():
         | moon_contamination
         | sw_mismatches
     )
-    print(f"    Total Sky Records Failed Other Cuts: {other_cuts.sum()}")
-    print(f"    Remaining Sky Records: {len(sky_data['ifg']) - other_cuts.sum()}")
-    # only the bol_cmd_bias is actually cutting stuff, so i'm guessing these other cuts happen in the data quality flag but i will leave them here anyways
+    print(f"    Total Sky Records Failed Other Cuts: {(~other_cuts).sum()}")
+    print(f"    Remaining Sky Records: {other_cuts.sum()}")
     for key in sky_data:
-        sky_data[key] = sky_data[key][other_cuts == False]
+        sky_data[key] = sky_data[key][other_cuts]
 
     # Using numpy interp is faster than scipy interp1d for single evaluations
     cal_data["bol_volt"] = np.interp(cal_data["midpoint_time_s"], eng_time_s, bol_volt)
     sky_data["bol_volt"] = np.interp(sky_data["midpoint_time_s"], eng_time_s, bol_volt)
 
-    # no high cuirrent readings for bolometers
+    # no high current readings for bolometers - vectorized
     a_lo_bol_assem = grt["a_lo_bol_assem"][:, channel_i]
     b_lo_bol_assem = grt["b_lo_bol_assem"][:, channel_i]
-    bol_assem = (a_lo_bol_assem + b_lo_bol_assem) / 2.0
-    # Using numpy interp is faster than scipy interp1d for single evaluations
+    bol_assem = (a_lo_bol_assem + b_lo_bol_assem) * 0.5  # Slightly faster than /2.0
+    
     cal_data["bolometer"] = np.interp(cal_data["midpoint_time_s"], eng_time_s, bol_assem)
-    bad_bolometer = cal_data["bolometer"] <= 0.0
+    good_bolometer_cal = cal_data["bolometer"] > 0.0
     for key in cal_data:
-        cal_data[key] = cal_data[key][bad_bolometer == False]
+        cal_data[key] = cal_data[key][good_bolometer_cal]
+    
     sky_data["bolometer"] = np.interp(sky_data["midpoint_time_s"], eng_time_s, bol_assem)
-    bad_bolometer = sky_data["bolometer"] <= 0.0
-    print(f"    Bad Bolometer Temperature Readings: {bad_bolometer.sum()}")
+    good_bolometer_sky = sky_data["bolometer"] > 0.0
+    print(f"    Bad Bolometer Temperature Readings: {(~good_bolometer_sky).sum()}")
     for key in sky_data:
-        sky_data[key] = sky_data[key][bad_bolometer == False]
+        sky_data[key] = sky_data[key][good_bolometer_sky]
 
-    # save
-    np.savez(
+    # save with compression
+    print(f"Saving results for channel {channel.upper()}...")
+    np.savez_compressed(
         f"{g.PREPROCESSED_DATA_PATH}/sky_{channel}.npz",
         **sky_data,
     )
-    np.savez(
+    np.savez_compressed(
         f"{g.PREPROCESSED_DATA_PATH}/cal_{channel}.npz",
         **cal_data,
     )
+    
+    channel_time = time.time() - start_time
+    print(f"Channel {channel.upper()} completed in {channel_time:.2f} seconds")
+
+elapsed_time = time.time() - start_time
+print(f"\n\nAll channels processed successfully!")
+print(f"Total time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
+print(f"\n\nAll channels processed successfully!")
+print(f"Total time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
