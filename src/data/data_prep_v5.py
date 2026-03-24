@@ -202,12 +202,12 @@ for channel, channel_i in g.CHANNELS.items():
                     temps[f"b_ical"] = temps[f"b_ical"][combined_mask]
                     xcal_pos = xcal_pos[combined_mask]
 
-            elif element == "xcal_cone":
-                    temps[f"{side}_hi_{element}"] = temps[f"{side}_hi_{element}"][xcal_pos == 1]
-                    temps[f"{side}_lo_{element}"] = temps[f"{side}_lo_{element}"][xcal_pos == 1]
+            # elif element == "xcal_cone":
+            #         temps[f"{side}_hi_{element}"] = temps[f"{side}_hi_{element}"][xcal_pos == 1]
+            #         temps[f"{side}_lo_{element}"] = temps[f"{side}_lo_{element}"][xcal_pos == 1]
 
-                    stats.fit_gaussian(temps[f"{side}_hi_{element}"], temps[f"{side}_lo_{element}"],
-                                       channel, element, side, ngaussians=0, sigma=1)
+            #         stats.fit_gaussian(temps[f"{side}_hi_{element}"], temps[f"{side}_lo_{element}"],
+            #                            channel, element, side, ngaussians=0, sigma=1)
 
             else:
                 # Vectorized temperature selection using the temps from the original pipeline       
@@ -593,10 +593,10 @@ for channel, channel_i in g.CHANNELS.items():
 
     # save
     np.savez(
-        f"{g.PREPROCESSED_DATA_PATH}/sky_{channel}.npz",
+        f"{g.PREPROCESSED_DATA_PATH}/preprocessed_sky_{channel}.npz",
         **sky_data,
     )
     np.savez(
-        f"{g.PREPROCESSED_DATA_PATH}/cal_{channel}.npz",
+        f"{g.PREPROCESSED_DATA_PATH}/preprocessed_cal_{channel}.npz",
         **cal_data,
     )
