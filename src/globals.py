@@ -2,20 +2,17 @@ import os
 
 import healpy as hp
 
-# analysis parameters
-OFFSET = 0
-
 user = os.environ["USER"]
 
 # data paths
 ORIGINAL_DATA = "/mn/stornext/d16/cmbco/ola/firas/initial_data/fdq_sdf_new.h5"
 ORIGINAL_DATA_ENG = "/mn/stornext/d16/cmbco/ola/firas/initial_data/fdq_eng_new.h5"
-PREPROCESSED_DATA_PATH = f"/mn/stornext/u3/{user}/d5/firas-reanalysis/Commander/commander3/todscripts/firas/data/preprocessed/"
-PREPROCESSED_DATA_PATH_SKY = f"/mn/stornext/u3/{user}/d5/firas-reanalysis/Commander/commander3/todscripts/firas/data/preprocessed/sky_v4.4.h5"
-PREPROCESSED_DATA_PATH_CAL = f"/mn/stornext/u3/{user}/d5/firas-reanalysis/Commander/commander3/todscripts/firas/data/preprocessed/cal_v4.4.h5"
-PROCESSED_DATA_PATH = f"/mn/stornext/u3/{user}/d5/firas-reanalysis/Commander/commander3/todscripts/firas/data/processed/"
-PROCESSED_DATA_PATH_SKY = f"/mn/stornext/u3/{user}/d5/firas-reanalysis/Commander/commander3/todscripts/firas/output/data/processed_sky_offset_{OFFSET}.npz"
-PROCESSED_DATA_PATH_CAL = f"/mn/stornext/u3/{user}/d5/firas-reanalysis/Commander/commander3/todscripts/firas/output/data/processed_cal.npz"
+PREPROCESSED_DATA_PATH = f"/mn/stornext/d5/data/{user}/firas-reanalysis/FIRAS-Pass5/data/"
+PREPROCESSED_DATA_PATH_SKY = f"/mn/stornext/d5/data/{user}/firas-reanalysis/FIRAS-Pass5/data/preprocessed_sky_v4.4.h5"
+PREPROCESSED_DATA_PATH_CAL = f"/mn/stornext/d5/data/{user}/firas-reanalysis/FIRAS-Pass5/data/preprocessed_cal_v4.4.h5"
+PROCESSED_DATA_PATH = f"/mn/stornext/d5/data/{user}/firas-reanalysis/FIRAS-Pass5/data/"
+PROCESSED_DATA_PATH_SKY = f"/mn/stornext/d5/data/{user}/firas-reanalysis/FIRAS-Pass5/output/data/processed_sky.npz"
+PROCESSED_DATA_PATH_CAL = f"/mn/stornext/d5/data/{user}/firas-reanalysis/FIRAS-Pass5/output/data/processed_cal.npz"
 
 SAVE_PATH = f"/mn/stornext/d16/www_cmb/{user}/firas/"
 
