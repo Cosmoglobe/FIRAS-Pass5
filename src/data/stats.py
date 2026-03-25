@@ -464,6 +464,10 @@ def electronics_model(beta, x):
     return level * (1 + (T_knee1 / x) ** 2 + (x / T_knee2) ** alpha)
     # return A1 * T_knee1 / x ** 2 + A2 * np.exp(x * alpha) + level
 
+def oneoverT2(beta, x):
+    level = beta[0]
+    T_knee = beta[1]
+    return level + (T_knee / x) ** 2
 
 def selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side):
     print(f"Number of points being fit: {len(mu)}")
@@ -512,6 +516,11 @@ def selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side):
     odr_result_electronics = odr_obj.run()
     print(f"Residual variance for electronics model: {odr_result_electronics.res_var:.3f}")
 
+    model = odr.Model(oneoverT2)
+    odr_obj = odr.ODR(data, model, beta0=[0, 3])
+    odr_result_oneoverT2 = odr_obj.run()
+    print(f"Residual variance for 1/T^2 model: {odr_result_oneoverT2.res_var:.3f}")
+
     if g.VERBOSE > 2:
         plt.figure()  # Create a new figure for the fit plots
         plt.errorbar(avg_temp, mu, yerr=mu_err, xerr=temp_err, fmt='o', label='Data')
@@ -521,6 +530,7 @@ def selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side):
         plt.plot(x, power_law(odr_result_power.beta, x), "b-", label="Power law")
         plt.plot(x, double_power_law(odr_result_double_power.beta, x), "m-", label="Double power law")
         plt.plot(x, electronics_model(odr_result_electronics.beta, x), "c-", label="Electronics model")
+        plt.plot(x, oneoverT2(odr_result_oneoverT2.beta, x), "y-", label="1/T^2 model")
         # plt.ylim(min(mu-mu_err), max(mu+mu_err))
         plt.xlabel("Average High Current Temperature (K)")
         plt.ylabel("Fitted Gaussian Mean of High-Low Difference (K)")
@@ -551,12 +561,12 @@ def debiase_hi(beta, hi, lo, element, side, channel):
     xsize = 1000 if element == "xcal_cone" else 10000
 
     if g.VERBOSE > 2:
-        fig_debias, ax_debias = plt.subplots(figsize=(12, 6))
-        ax_debias.set_xlabel("Record Index")
-        ax_debias.set_ylabel("Temperature (K)")
-        ax_debias.set_title(f"Debiasing High Current Temperatures for {element} ({side.upper()}) - {channel.upper()}")
         x = np.arange(len(hi))
         for i in range(0, len(debiased_hi), xsize):
+            fig_debias, ax_debias = plt.subplots(figsize=(12, 6))
+            ax_debias.set_xlabel("Record Index")
+            ax_debias.set_ylabel("Temperature (K)")
+            ax_debias.set_title(f"Debiasing High Current Temperatures for {element} ({side.upper()}) - {channel.upper()}")
             ax_debias.plot(x[i:i+xsize], lo[i:i+xsize], label='Low Current')
             ax_debias.plot(x[i:i+xsize], hi[i:i+xsize],
                     label='High Current', ls='None', marker='.', ms=4)
@@ -568,6 +578,7 @@ def debiase_hi(beta, hi, lo, element, side, channel):
             fig_debias.savefig(f"data/output/debiase_hi/01_timeseries/{element}/{side}/{channel}_{i}_0.png")
             plt.close(fig_debias)
 
+            fig_debias, ax_debias = plt.subplots(figsize=(12, 6))
             ax_debias.plot(x[i:i+xsize], lo[i:i+xsize], label='Low Current')
             ax_debias.plot(x[i:i+xsize], debiased_hi[i:i+xsize],
                     label='Debiased High Current', ls='None', marker='.', ms=4)
