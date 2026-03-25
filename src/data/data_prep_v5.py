@@ -160,7 +160,7 @@ for channel, channel_i in g.CHANNELS.items():
 
     # the next table to reproduce needs the ICAL temperatures so we need to match them now
     # Interpolate temperatures for sky data
-    elements = ["ical", "xcal_cone", "refhorn"]#, "skyhorn", "dihedral", "collimator"]
+    elements = ["ical", "xcal_cone", "refhorn", "skyhorn", "dihedral", "collimator"]
     sides = ["a", "b"]
 
     print(f"Testing new way for de-biasing temperatures for ICAL and using the previous one for the rest")
@@ -179,8 +179,7 @@ for channel, channel_i in g.CHANNELS.items():
     # Batch interpolatetemperatures for all elements and sides
     print("Batch interpolating temperatures...")
     
-    # Create figure for all points
-    plt.figure(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(10, 6))
     
     for element in elements:
         for side in sides:
@@ -220,7 +219,7 @@ for channel, channel_i in g.CHANNELS.items():
                     print(f"  {element} {side.upper()} plateau {i+1}: temp={avg_temp[i]:.3f}, mu={mu[i]:.3f}")
                 # Only add label for the first point of each element/side combination
                 label = f"{element} ({side.upper()})" if i == 0 else None
-                plt.errorbar(avg_temp[i], mu[i], xerr=temp_err[i], yerr=mu_err[i], fmt='o',
+                ax.errorbar(avg_temp[i], mu[i], xerr=temp_err[i], yerr=mu_err[i], fmt='o',
                              color=f'C{thermometerid}', label=label, markersize=6, capsize=3)
                 
             beta = stats.selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side)
@@ -251,24 +250,13 @@ for channel, channel_i in g.CHANNELS.items():
             sky_data[element] = all_data[element][xcal_pos == 2]
 
     # Finalize and save the plot with all points
-    plt.xlabel("Average High Current Temperature (K)")
-    plt.ylabel("Fitted Gaussian Mean of High-Low Difference (K)")
-    plt.title(f"Self-Heating vs Temperature for All Elements - Channel {channel.upper()}")
-    
-    # Check if we have any data and adjust axes accordingly
-    ax = plt.gca()
-    if len(ax.lines) > 0 or len(ax.collections) > 0:
-        plt.legend(loc='best')
-        # Auto-scale to show all data
-        plt.autoscale(enable=True, tight=False)
-    else:
-        print(f"WARNING: No data points plotted for channel {channel}!")
-    
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(f'data/output/all_points_{channel}.png', dpi=150)
-    print(f"Saved plot with {len(ax.lines)} lines and {len(ax.collections)} collections")
-    plt.close()
+    ax.set_xlabel("Average High Current Temperature (K)")
+    ax.set_ylabel("Fitted Gaussian Mean of High-Low Difference (K)")
+    ax.set_title(f"Self-Heating vs Temperature for All Elements - Channel {channel.upper()}")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(f'data/output/all_points_{channel}.png', dpi=150)
+    plt.close(fig)
 
     quit() # TODO: remove
 
