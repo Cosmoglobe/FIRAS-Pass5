@@ -17,6 +17,7 @@ element_long_names = {
     "xcal_cone": "External Calibrator Cone",
     "refhorn": "Reference Horn",
     "skyhorn": "Sky Horn",
+    "dihedral": "Dihedral Mirror",
     }
 
 def table3_4(xcal_pos, mtm_length, mtm_speed):
@@ -447,22 +448,14 @@ def double_power_law(beta, x):
     return A1 * x**(alpha1) + A2 * x**(alpha2)
 
 def electronics_model(beta, x):
-    # A1 = beta[0]
-    # T_knee1 = beta[0]
-    # # A2 = beta[2]
-    # alpha = beta[1]
-    # T_knee2 = beta[4]
-    # # level = beta[5]
-    # level = beta[4]
     level = beta[0]
     T_knee1 = beta[1]
     T_knee2 = beta[2]
     alpha = beta[3]
+    # A1 = beta[4]
+    # A2 = beta[5]
 
-    # self%xi_n(SIGMA0)**2 * (1. + (nu/self%xi_n(FKNEE))**self%xi_n(ALPHA) + (nu/self%xi_n(FKNEE2))**self%xi_n(ALPHA2))
-
-    return level * (1 + (T_knee1 / x) ** 2 + (x / T_knee2) ** alpha)
-    # return A1 * T_knee1 / x ** 2 + A2 * np.exp(x * alpha) + level
+    return level + (T_knee1 / x) ** 2 + (x / T_knee2) ** alpha
 
 def oneoverT2(beta, x):
     level = beta[0]

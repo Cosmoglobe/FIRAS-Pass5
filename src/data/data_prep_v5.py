@@ -258,8 +258,6 @@ for channel, channel_i in g.CHANNELS.items():
     fig.savefig(f'data/output/all_points_{channel}.png', dpi=150)
     plt.close(fig)
 
-    quit() # TODO: remove
-
     # collimator_hi = interpolators["a_hi_collimator"](midpoint_time_s)
     # collimator_lo = interpolators["a_lo_collimator"](midpoint_time_s)
     # all_data = ((collimator_hi + collimator_lo) / 2.0)
