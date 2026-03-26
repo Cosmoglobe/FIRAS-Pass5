@@ -160,7 +160,8 @@ for channel, channel_i in g.CHANNELS.items():
 
     # the next table to reproduce needs the ICAL temperatures so we need to match them now
     # Interpolate temperatures for sky data
-    elements = ["ical", "xcal_cone", "refhorn", "skyhorn", "dihedral", "collimator"]
+    elements = ["ical", "xcal_cone", "refhorn", "skyhorn", "collimator"]
+    # the dihdral operates at different temperatures and thus we use a different method for it
     sides = ["a", "b"]
 
     print(f"Testing new way for de-biasing temperatures for ICAL and using the previous one for the rest")
@@ -248,6 +249,8 @@ for channel, channel_i in g.CHANNELS.items():
             # split back into cal and sky data
             cal_data[element] = all_data[element][xcal_pos == 1]
             sky_data[element] = all_data[element][xcal_pos == 2]
+
+    all_data["dihedral"] = (temps["a_lo_dihedral"] + temps["b_lo_dihedral"]) / 2.0
 
     # Finalize and save the plot with all points
     ax.set_xlabel("Average High Current Temperature (K)")
