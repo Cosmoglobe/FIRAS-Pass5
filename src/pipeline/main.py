@@ -23,7 +23,7 @@ fnyq = gen_nyquistl(
 
 for channel, channel_value in g.CHANNELS.items():
     sky_data = np.load(
-        f"{g.PREPROCESSED_DATA_PATH}/sky_{channel}.npz", allow_pickle=True
+        f"{g.PREPROCESSED_DATA_PATH}/sky.npz", allow_pickle=True
     )
     for mode, mode_value in g.MODES.items():
         if not (mode == "lf" and (channel == "lh" or channel == "rh")):

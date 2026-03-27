@@ -268,7 +268,7 @@ def _plot_timeseries_chunk(args):
             ax_ts.plot(x[mask_slice], lo[x][mask_slice], label=f'Plateau {j+1}', ls='None', marker='.',
                      ms=4, color=f"C{j}")
     ax_ts.legend()
-    fig_ts.savefig(f"data/output/divide_plateaus/01_chunks_over_time_{channel}/{element}/{side}/{i}.png")
+    fig_ts.savefig(f"data/output/divide_plateaus/01_chunks_over_time/{channel}/{element}/{side}/{i}.png")
     plt.close(fig_ts)
 
 
@@ -326,7 +326,7 @@ def divide_plateaus(lo, channel, element, side, plateau_divides_cache=None, n_co
             plt.xlabel("Record Index")
             plt.ylabel("Temperature (K)")
             plt.title(f"Low Current Over Time for {element} ({side.upper()}) - {channel.upper()}")
-            plt.savefig(f"data/output/divide_plateaus/02_plateaus_over_time_{channel}/{element}/{side}_{i+1}.png")
+            plt.savefig(f"data/output/divide_plateaus/02_plateaus_over_time/{channel}/{element}/{side}_{i+1}.png")
             plt.close()
         print("Plotted check 2 -----------------------------------------------------------------------")
 
@@ -374,7 +374,7 @@ def fit_gaussian(hi, lo, channel, element, side, sigma=3, plateau=0):
         print(f"Explained fraction by the gaussian at {sigma} std: {explained*100:.02f}%")
 
         ax_gauss.legend()
-        fig_gauss.savefig(f"data/output/fit_gaussian/01_hilo_temp_difference_{channel}/{element}/{side}_plateau_{plateau}.png")
+        fig_gauss.savefig(f"data/output/fit_gaussian/01_hilo_temp_difference/{channel}/{element}/{side}_plateau_{plateau}.png")
         plt.close(fig_gauss)
         print("Plotted check 1 -------------------------------------------------------------------")
     return mu, mu_err, avg_temp, temp_err
@@ -453,10 +453,11 @@ def electronics_model(beta, x):
     T_knee1 = beta[1]
     T_knee2 = beta[2]
     alpha = beta[3]
-    # A1 = beta[4]
-    # A2 = beta[5]
+    A1 = beta[4]
+    A2 = beta[5]
 
-    return level + (T_knee1 / x) ** 2 + (x / T_knee2) ** alpha
+    # return level + (T_knee1 / x) ** 2 + (x / T_knee2) ** alpha
+    return level + A1 * (T_knee1 / x) ** 2 + A2 * (x / T_knee2) ** alpha
 
 def oneoverT2(beta, x):
     level = beta[0]
@@ -505,8 +506,8 @@ def selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side):
     print(f"Residual variance for double power law: {odr_result_double_power.res_var:.3f}")
 
     model = odr.Model(electronics_model)
-    # odr_obj = odr.ODR(data, model, beta0=[1.0, 4.0, 1.0, -1.0, 4.0, 0.0])
-    odr_obj = odr.ODR(data, model, beta0=[1, 4, 6, 0])
+    odr_obj = odr.ODR(data, model, beta0=[1, 4, 6, 0, 1, 1])
+    # odr_obj = odr.ODR(data, model, beta0=[1, 4, 6, 0])
     odr_result_electronics = odr_obj.run()
     print(f"Residual variance for electronics model: {odr_result_electronics.res_var:.3f}")
 
@@ -569,7 +570,7 @@ def debiase_hi(beta, hi, lo, element, side, channel):
             ax_debias.set_xlabel("Record Index")
             ax_debias.set_title(f"Temperatures measured for the {element_long_names[element]}")
             ax_debias.legend()
-            fig_debias.savefig(f"data/output/debiase_hi/01_timeseries/{element}/{side}/{channel}_{i}_0.png")
+            fig_debias.savefig(f"data/output/debiase_hi/01_timeseries/{element}/{side}/{channel}/{i}_0.png")
             plt.close(fig_debias)
 
             fig_debias, ax_debias = plt.subplots(figsize=(12, 6))
@@ -581,7 +582,7 @@ def debiase_hi(beta, hi, lo, element, side, channel):
             ax_debias.set_xlabel("Record Index")
             ax_debias.set_title(f"Temperatures measured for the {element_long_names[element]}")
             ax_debias.legend()
-            fig_debias.savefig(f"data/output/debiase_hi/01_timeseries/{element}/{side}/{channel}_{i}_1.png")
+            fig_debias.savefig(f"data/output/debiase_hi/01_timeseries/{element}/{side}/{channel}/{i}_1.png")
             plt.close(fig_debias)
         print("Plotted check 1 -------------------------------------------------------------------")
 
