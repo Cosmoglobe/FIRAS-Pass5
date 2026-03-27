@@ -160,8 +160,9 @@ for channel, channel_i in g.CHANNELS.items():
 
     # the next table to reproduce needs the ICAL temperatures so we need to match them now
     # Interpolate temperatures for sky data
-    elements = ["ical", "xcal_cone", "refhorn", "skyhorn", "collimator"]
+    elements = ["ical", "xcal_cone", "refhorn", "skyhorn"]
     # the dihdral operates at different temperatures and thus we use a different method for it
+    # same for the collimator
     sides = ["a", "b"]
 
     print(f"Testing new way for de-biasing temperatures for ICAL and using the previous one for the rest")
@@ -191,8 +192,6 @@ for channel, channel_i in g.CHANNELS.items():
             temps[f"{side}_hi_{element}"] = interpolators[f"{side}_hi_{element}"](midpoint_time_s)
             temps[f"{side}_lo_{element}"] = interpolators[f"{side}_lo_{element}"](midpoint_time_s)
 
-            # TODO: working on changing this to new de-biased temps
-            # if element == "ical" or element == "xcal_cone":
             if element == "xcal_cone":
                 xcal_mask = xcal_pos == 1
                 temps[f"{side}_hi_{element}"] = temps[f"{side}_hi_{element}"][xcal_mask]
@@ -223,34 +222,31 @@ for channel, channel_i in g.CHANNELS.items():
                 ax.errorbar(avg_temp[i], mu[i], xerr=temp_err[i], yerr=mu_err[i], fmt='o',
                              color=f'C{thermometerid}', label=label, markersize=6, capsize=3)
                 
-            beta = stats.selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side)
-            temps[f"{side}_{element}"] = stats.debiase_hi(beta,
-                                                            temps[f"{side}_hi_{element}"],
-                                                            temps[f"{side}_lo_{element}"],
-                                                            element, side, channel)
+        #     beta = stats.selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side)
+        #     temps[f"{side}_{element}"] = stats.debiase_hi(beta,
+        #                                                     temps[f"{side}_hi_{element}"],
+        #                                                     temps[f"{side}_lo_{element}"],
+        #                                                     element, side, channel)
 
-            # else:
-            #     # Vectorized temperature selection using the temps from the original pipeline       
-            #     temps[f"{side}_{element}"] = data_utils.get_temperature_hl_vectorized(
-            #         temps[f"{side}_lo_{element}"],
-            #         temps[f"{side}_hi_{element}"],
-            #         element,
-            #         side,
-            #     )
+        # all_data[element] = (temps[f"a_{element}"] + temps[f"b_{element}"]) / 2.0
 
-        if element == "collimator":
-            all_data[element] = temps[f"a_{element}"]
-        else:
-            all_data[element] = (temps[f"a_{element}"] + temps[f"b_{element}"]) / 2.0
+        # if element == "xcal_cone":
+        #     cal_data[element] = all_data[element]
+        # else:
+        #     # split back into cal and sky data
+        #     cal_data[element] = all_data[element][xcal_pos == 1]
+        #     sky_data[element] = all_data[element][xcal_pos == 2]
 
-        if element == "xcal_cone":
-            cal_data[element] = all_data[element]
-        else:
-            # split back into cal and sky data
-            cal_data[element] = all_data[element][xcal_pos == 1]
-            sky_data[element] = all_data[element][xcal_pos == 2]
-
+    temps[f"a_lo_dihedral"] = interpolators[f"a_lo_dihedral"](midpoint_time_s)
+    temps[f"b_lo_dihedral"] = interpolators[f"b_lo_dihedral"](midpoint_time_s)
     all_data["dihedral"] = (temps["a_lo_dihedral"] + temps["b_lo_dihedral"]) / 2.0
+
+    temps[f"a_lo_collimator"] = interpolators[f"a_lo_collimator"](midpoint_time_s)
+    all_data["collimator"] = temps["a_lo_collimator"]
+
+    for element in ["dihedral", "collimator"]:
+        cal_data[element] = all_data[element][xcal_pos == 1]
+        sky_data[element] = all_data[element][xcal_pos == 2]
 
     # Finalize and save the plot with all points
     ax.set_xlabel("Average High Current Temperature (K)")
@@ -261,30 +257,6 @@ for channel, channel_i in g.CHANNELS.items():
     fig.savefig(f'data/output/all_points_{channel}.png', dpi=150)
     plt.close(fig)
 
-    # collimator_hi = interpolators["a_hi_collimator"](midpoint_time_s)
-    # collimator_lo = interpolators["a_lo_collimator"](midpoint_time_s)
-    # all_data = ((collimator_hi + collimator_lo) / 2.0)
-
-    # cal_data["collimator"] = all_data[xcal_pos == 1]
-    # sky_data["collimator"] = all_data[xcal_pos == 2]
-
-    # collimator_hi = interpolators["a_hi_collimator"](sky_data["midpoint_time_s"])
-    # collimator_lo = interpolators["a_lo_collimator"](sky_data["midpoint_time_s"])
-    # sky_data["collimator"] = ((collimator_hi + collimator_lo) / 2.0)[temp_mask_sky["a"] & temp_mask_sky["b"]]
-    # apply temp masks to cal and sky data except for elements and collimator
-    # for key in cal_data:
-    #     if key not in elements and key != "collimator":
-    #         # print(f"DEBUG key: {key}. Shape before masking: cal_data {cal_data[key].shape}, sky_data {sky_data[key].shape}")
-    #         # Use concatenate with axis=0 for 2D arrays, append for 1D
-    #         if cal_data[key].ndim > 1:
-    #             all_data = np.concatenate([cal_data[key], sky_data[key]], axis=0)
-    #         else:
-    #             all_data = np.append(cal_data[key], sky_data[key])
-    #         all_data = all_data[sorted_indices]
-    #         all_data = all_data
-    #         cal_data[key] = all_data[xcal_pos == 1]
-    #         sky_data[key] = all_data[xcal_pos == 2]
-            # print(f"DEBUG key: {key}. Shape after masking: cal_data {cal_data[key].shape}, sky_data {sky_data[key].shape}")
     (
         earth_limb,
         # wrong_ical_temp_cal,

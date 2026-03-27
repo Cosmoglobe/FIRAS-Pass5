@@ -18,6 +18,7 @@ element_long_names = {
     "refhorn": "Reference Horn",
     "skyhorn": "Sky Horn",
     "dihedral": "Dihedral Mirror",
+    "collimator": "Collimating Mirror"
     }
 
 def table3_4(xcal_pos, mtm_length, mtm_speed):
