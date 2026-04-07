@@ -3,10 +3,11 @@ So for this version we will keep each channel separate and use the midpoint_time
 """
 
 import astropy.units as u
-import data.utils.my_utils as data_utils
-import globals as g
 import h5py
 import matplotlib
+
+import data.utils.my_utils as data_utils
+import globals as g
 
 matplotlib.use('Agg')  # Use non-interactive backend
 import os
@@ -16,6 +17,7 @@ from multiprocessing import Pool
 
 import matplotlib.pyplot as plt
 import numpy as np
+
 from data import stats
 from engineering_timing.get_interpolated_times import get_data, get_interp
 
@@ -61,10 +63,6 @@ en_analog = fdq_eng["en_analog"]
 grt = en_analog["grt"]
 grts, grt_times = get_data()
 interpolators = get_interp(grts, grt_times)
-# remove nans from grts and corresponding times
-# valid_indices = ~np.isnan(grts).any(axis=1)
-# grts = grts[valid_indices]
-# grt_times = grt_times[valid_indices]
 
 group1 = en_analog["group1"]
 
@@ -230,28 +228,11 @@ for channel, channel_i in g.CHANNELS.items():
                 avg_temp[keyword][i] = output[2]
                 temp_err[keyword][i] = output[3]
                 
-                # if g.VERBOSE > 0:
-                #     print(f"  {element} {side.upper()} plateau {i+1}: temp={avg_temp[i]:.3f}, mu={mu[i]:.3f}")
                 # Only add label for the first point of each element/side combination
                 label = f"{element} ({side.upper()})" if i == 0 else None
                 ax.errorbar(avg_temp[keyword][i], mu[keyword][i], xerr=temp_err[keyword][i],
                             yerr=mu_err[keyword][i], fmt='o', color=f'C{thermometerid}',
                             label=label, markersize=6, capsize=3)
-                
-        #     beta = stats.selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side)
-        #     temps[f"{side}_{element}"] = stats.debiase_hi(beta,
-        #                                                     temps[f"{side}_hi_{element}"],
-        #                                                     temps[f"{side}_lo_{element}"],
-        #                                                     element, side, channel)
-
-        # all_data[element] = (temps[f"a_{element}"] + temps[f"b_{element}"]) / 2.0
-
-        # if element == "xcal_cone":
-        #     cal_data[element] = all_data[element]
-        # else:
-        #     # split back into cal and sky data
-        #     cal_data[element] = all_data[element][xcal_pos == 1]
-        #     sky_data[element] = all_data[element][xcal_pos == 2]
 
 # join the results for the same thermometer in all of the channels
 beta = {}
@@ -304,12 +285,8 @@ for channel, channel_i in g.CHANNELS.items():
 
     (
         earth_limb,
-        # wrong_ical_temp_cal,
-        # wrong_ical_temp_sky,
         sun_angle,
         wrong_sci_mode,
-        # dihedral_temp_cal,
-        # dihedral_temp_sky,
     ) = stats.table4_5(
         sky_data[f"earth_limb_{channel}"],
         cal_data[f"midpoint_time_gmt_{channel}"],
@@ -324,15 +301,10 @@ for channel, channel_i in g.CHANNELS.items():
 
     print("Ignoring official temperature cuts...")
 
-    # cal_cuts = wrong_ical_temp_cal | dihedral_temp_cal
-    # for key in cal_data:
-    #     cal_data[key] = cal_data[key][cal_cuts == False]
     sky_cuts = (
         earth_limb
-        # | wrong_ical_temp_sky
         | sun_angle
         | wrong_sci_mode
-        # | dihedral_temp_sky
     )
     for key in sky_data:
         if key.endswith(f"_{channel}"):
@@ -562,5 +534,7 @@ np.savez_compressed(
 )
 
 elapsed_time = time.time() - start_time
+print(f"\n\nAll channels processed successfully!")
+print(f"Total time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
 print(f"\n\nAll channels processed successfully!")
 print(f"Total time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")

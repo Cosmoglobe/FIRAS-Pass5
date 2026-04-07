@@ -136,107 +136,21 @@ def table4_5(
     earth_limb = earth_limb < 87
     print(f"    Earth Limb Angle < 87.0: {earth_limb.sum()}")
 
-    # start_times = [
-    #     "89-326-1130",
-    #     "89-328-0000",
-    #     "89-343-0152",
-    #     "90-019-0205",
-    #     "90-080-0115",
-    #     "90-129-0000",
-    #     "90-139-1535",
-    #     "90-193-1850",
-    #     "90-207-1104",
-    #     "90-208-1120",
-    #     "90-220-0500",
-    # ]
-    # # Vectorized date parsing using list comprehension (faster than loop)
-    # start_times = [
-    #     data_utils.parse_date_string(t.replace("-", ""), include_s=False)
-    #     for t in start_times
-    # ]
-
-    # end_times = [
-    #     "89-327-2359",
-    #     "89-343-0151",
-    #     "90-019-0204",
-    #     "90-080-0114",
-    #     "90-128-2359",
-    #     "90-139-1534",
-    #     "90-193-1849",
-    #     "90-207-1103",
-    #     "90-208-1119",
-    #     "90-220-0459",
-    #     "90-264-0936",
-    # ]
-    # end_times = [
-    #     data_utils.parse_date_string(t.replace("-", ""), include_s=False)
-    #     for t in end_times
-    # ]
-
-    # allowed_ical_temps = [
-    #     [2.789],
-    #     [2.758, 2.763, 2.789],
-    #     [2.759, 2.771],
-    #     [2.758, 2.771],
-    #     [2.758, 2.771],
-    #     [2.758, 2.770],
-    #     [2.7455, 2.755, 2.768],
-    #     [2.746, 2.757, 2.769],
-    #     [2.757, 2.769],
-    #     [2.758, 2.770],
-    #     [2.758, 2.771],
-    # ]
-
-    # wrong_ical_temp_cal = np.zeros(len(midpoint_time_cal), dtype=bool)
-    # for i, (start, end, temps) in enumerate(
-    #     zip(start_times, end_times, allowed_ical_temps)
-    # ):
-    #     time_mask = (midpoint_time_cal > start) & (midpoint_time_cal < end)
-    #     temp_mask = np.ones(len(midpoint_time_cal), dtype=bool)
-    #     for temp in temps:
-    #         temp_mask &= (ical_cal > temp + 0.002) | (ical_cal < temp - 0.002)
-    #     wrong_ical_temp_cal |= time_mask & temp_mask
-
-    # wrong_ical_temp_sky = np.zeros(len(midpoint_time_sky), dtype=bool)
-    # for i, (start, end, temps) in enumerate(
-    #     zip(start_times, end_times, allowed_ical_temps)
-    # ):
-    #     time_mask = (midpoint_time_sky > start) & (midpoint_time_sky < end)
-    #     temp_mask = np.ones(len(midpoint_time_sky), dtype=bool)
-    #     for temp in temps:
-    #         temp_mask &= (ical_sky > temp + 0.002) | (ical_sky < temp - 0.002)
-    #     wrong_ical_temp_sky |= time_mask & temp_mask
-    # print(f"    Wrong ICAL Temperature: {sum(wrong_ical_temp_sky)}")
-
     sun_angle = sun_angle < 91.2
     print(f"    Sun Angle < 91.2: {sun_angle.sum()}")
 
     wrong_sci_mode = upmode != 4
     print(f"    Wrong Science Mode: {wrong_sci_mode.sum()}")
 
-    # dihedral_temp_cal = dihedral_cal > 5.5
-    # dihedral_temp_sky = dihedral_sky > 5.5
-    # print(f"    Dihedral Temperature > 5.5: {dihedral_temp_sky.sum()}")
-
-    # print(
-    #     f"    Sky Records Failed by FSS: {(earth_limb | wrong_ical_temp_sky | sun_angle | wrong_sci_mode | dihedral_temp_sky).sum()}"
-    # )
     print(f"    Sky Records Failed by FSS: {(earth_limb | sun_angle | wrong_sci_mode).sum()}")
-    # print(
-    #     f"Sky Records Passed by FSS: {len(midpoint_time_sky) - (earth_limb | wrong_ical_temp_sky | sun_angle | wrong_sci_mode | dihedral_temp_sky).sum()}"
-    # )
     print(
         f"    Sky Records Passed by FSS: {len(midpoint_time_sky) - (earth_limb | sun_angle | wrong_sci_mode).sum()}"
     )
     
     return (
         earth_limb,
-        # wrong_ical_temp_cal,
-        # wrong_ical_temp_sky,
         sun_angle,
         wrong_sci_mode,
-        # dihedral_temp_cal,
-        # dihedral_temp_sky,
     )
 
 def hilo_stats(hi, lo, channel, element, side):
@@ -379,53 +293,6 @@ def fit_gaussian(hi, lo, channel, element, side, sigma=3, plateau=0):
         print("Plotted check 1 -------------------------------------------------------------------")
     return mu, mu_err, avg_temp, temp_err
 
-    # plot all temperatures over time for visual inspection
-    # plt.figure(figsize=(12, 6))
-    # plt.xlabel("Record Index")
-    # plt.ylabel("Temperature (K)")
-    # plt.title(f"Detector Temperatures Over Time for {element} ({side.upper()}) - {channel.upper()}")
-
-    x = np.arange(len(hi))
-
-    # plot only a subset to see better
-    idx = x[(x > 90000) & (x < 95000)]
-    x = x[idx]
-    hi = hi[idx]
-    lo = lo[idx]
-    diff = diff[idx]
-    
-    plt.plot(x, hi, label='High Temp')
-    plt.plot(x, lo, label='Low Temp')
-    plt.savefig(f"data/output/fit_gaussian/hilo_temp_timeseries/{element}_{side}_{channel}_plateau{plateau}_g0.png")
-    plt.close()
-    if ngaussians > 0:
-        plt.plot(x[(diff > mu - sigma*std) & (diff < mu + sigma*std)],
-                 hi[(diff > mu - sigma*std) & (diff < mu + sigma*std)], label='Explained by Gaussian 1',
-                    linestyle='None', marker='.')
-        plt.plot(x[(diff > mu - sigma*std) & (diff < mu + sigma*std)],
-                 lo[(diff > mu - sigma*std) & (diff < mu + sigma*std)], label='Explained by Gaussian 1',
-                    linestyle='None', marker='.')
-        plt.legend()
-        plt.savefig(f"data/output/fit_gaussian/hilo_temp_timeseries/{element}_{side}_{channel}_g1.png")
-        plt.close()
-    if ngaussians > 1:
-        plt.plot(x[(diff > mu2 - sigma*std2) & (diff < mu2 + sigma*std2)],
-                 hi[(diff > mu2 - sigma*std2) & (diff < mu2 + sigma*std2)], label='Explained by Gaussian 2',
-                    linestyle='None', marker='.')
-        plt.plot(x[(diff > mu2 - sigma*std2) & (diff < mu2 + sigma*std2)],
-                 lo[(diff > mu2 - sigma*std2) & (diff < mu2 + sigma*std2)], label='Explained by Gaussian 2',
-                    linestyle='None', marker='.')
-        plt.legend()
-        plt.savefig(f"data/output/fit_gaussian/hilo_temp_timeseries/{element}_{side}_{channel}_g2.png")
-        plt.close()
-    
-    # plt.savefig(f"data/output/hilo_temp_timeseries/{element}_{side}_{channel}.png")
-    # plt.close()
-    if ngaussians == 1:
-        return mu, std
-    elif ngaussians == 2:
-        return mu, std, mu2, std2
-
 def negative_exponential(beta, x):
     A = beta[0]
     lamb = beta[1]
@@ -541,7 +408,6 @@ def selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side):
         plt.plot(x, electronics_model(odr_result_electronics.beta, x), label="Electronics model")
         plt.plot(x, electronics_model2(odr_result_electronics2.beta, x), label="Electronics model2")
         plt.plot(x, oneoverT2(odr_result_oneoverT2.beta, x), label="1/T^2 model")
-        # plt.ylim(min(mu-mu_err), max(mu+mu_err))
         plt.xlabel("Average High Current Temperature (K)")
         plt.ylabel("Fitted Gaussian Mean of High-Low Difference (K)")
         plt.title("Self-Heating vs Average High Current Temperature - Model Fits")
@@ -560,13 +426,6 @@ def debiase_hi(beta, hi, lo, element, side, channel):
     
     # Vectorized debiasing - no copying needed
     debiased_hi = hi - electronics_model(beta, hi)
-
-    # mask1 = (diff > mu - sigma*std) & (diff < mu + sigma*std)
-    # debiased_hi[mask1] = hi[mask1] - mu
-
-    # # Debias using the second Gaussian
-    # mask2 = (diff > mu2 - sigma*std2) & (diff < mu2 + sigma*std2)
-    # debiased_hi[mask2] = hi[mask2] - mu2
 
     xsize = 1000 if element == "xcal_cone" else 10000
 
