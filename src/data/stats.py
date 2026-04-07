@@ -380,10 +380,10 @@ def fit_gaussian(hi, lo, channel, element, side, sigma=3, plateau=0):
     return mu, mu_err, avg_temp, temp_err
 
     # plot all temperatures over time for visual inspection
-    plt.figure(figsize=(12, 6))
-    plt.xlabel("Record Index")
-    plt.ylabel("Temperature (K)")
-    plt.title(f"Detector Temperatures Over Time for {element} ({side.upper()}) - {channel.upper()}")
+    # plt.figure(figsize=(12, 6))
+    # plt.xlabel("Record Index")
+    # plt.ylabel("Temperature (K)")
+    # plt.title(f"Detector Temperatures Over Time for {element} ({side.upper()}) - {channel.upper()}")
 
     x = np.arange(len(hi))
 
@@ -420,7 +420,7 @@ def fit_gaussian(hi, lo, channel, element, side, sigma=3, plateau=0):
         plt.close()
     
     # plt.savefig(f"data/output/hilo_temp_timeseries/{element}_{side}_{channel}.png")
-    plt.close()
+    # plt.close()
     if ngaussians == 1:
         return mu, std
     elif ngaussians == 2:
