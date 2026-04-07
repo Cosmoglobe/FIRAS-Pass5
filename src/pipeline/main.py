@@ -27,28 +27,30 @@ for channel, channel_value in g.CHANNELS.items():
     )
     for mode, mode_value in g.MODES.items():
         if not (mode == "lf" and (channel == "lh" or channel == "rh")):
-            length_filter = sky_data["mtm_length"] == (0 if mode[0] == "s" else 1)
-            speed_filter = sky_data["mtm_speed"] == (0 if mode[1] == "s" else 1)
+            length_filter = sky_data[f"mtm_length_{channel}"] == (0 if mode[0] == "s" else 1)
+            speed_filter = sky_data[f"mtm_speed_{channel}"] == (0 if mode[1] == "s" else 1)
             mode_filter = length_filter & speed_filter
 
             mode_data = {}
             for var in sky_data.files:
-                mode_data[var] = sky_data[var][mode_filter]
+                if var.endswith(f"_{channel}"):
+                    mode_data[var] = sky_data[var][mode_filter]
 
             # filter out bad data (selected "by eye")
             filter_bad = filter.filter_junk(
-                mode_data["stat_word_1"],
-                mode_data["stat_word_5"],
-                mode_data["stat_word_9"],
-                mode_data["stat_word_12"],
-                mode_data["stat_word_13"],
-                mode_data["stat_word_16"],
-                mode_data["lvdt_stat_a"],
-                mode_data["lvdt_stat_b"],
+                mode_data[f"stat_word_1_{channel}"],
+                mode_data[f"stat_word_5_{channel}"],
+                mode_data[f"stat_word_9_{channel}"],
+                mode_data[f"stat_word_12_{channel}"],
+                mode_data[f"stat_word_13_{channel}"],
+                mode_data[f"stat_word_16_{channel}"],
+                mode_data[f"lvdt_stat_a_{channel}"],
+                mode_data[f"lvdt_stat_b_{channel}"],
             )
 
             for var in mode_data:
-                mode_data[var] = mode_data[var][filter_bad]
+                if var.endswith(f"_{channel}"):
+                    mode_data[var] = mode_data[var][filter_bad]
 
             frec = 4 * (channel_value % 2) + mode_value
 
@@ -70,19 +72,19 @@ for channel, channel_value in g.CHANNELS.items():
             otf = otf[np.abs(otf) > 0]
             apod = fits_data[1].data["APODIZAT"][0]
 
-            mode_data["spec"] = ifg_spec.ifg_to_spec(
-                ifg=mode_data["ifg"],
+            mode_data[f"spec_{channel}"] = ifg_spec.ifg_to_spec(
+                ifg=mode_data[f"ifg_{channel}"],
                 channel=channel,
                 mode=mode,
-                adds_per_group=mode_data["adds_per_group"],
-                bol_cmd_bias=mode_data[f"bol_cmd_bias"]
+                adds_per_group=mode_data[f"adds_per_group_{channel}"],
+                bol_cmd_bias=mode_data[f"bol_cmd_bias_{channel}"]
                 / 25.5,  # needs this factor to put it into volts (from pipeline)
-                bol_volt=mode_data[f"bol_volt"],
+                bol_volt=mode_data[f"bol_volt_{channel}"],
                 fnyq_icm=fnyq["icm"][frec],
                 otf=otf,
-                Tbol=mode_data[f"bolometer"],
-                gain=mode_data[f"gain"],
-                sweeps=mode_data[f"sweeps"],
+                Tbol=mode_data[f"bolometer_{channel}"],
+                gain=mode_data[f"gain_{channel}"],
+                sweeps=mode_data[f"sweeps_{channel}"],
                 apod=apod,
             )
 
@@ -117,12 +119,12 @@ for channel, channel_value in g.CHANNELS.items():
             bolometer_emiss = emissivities["bolometer"]
 
             # Compute all blackbody spectra at once (vectorized)
-            bb_ical = utils.planck(f_ghz, mode_data["ical"])
-            bb_dihedral = utils.planck(f_ghz, mode_data["dihedral"])
-            bb_refhorn = utils.planck(f_ghz, mode_data["refhorn"])
-            bb_skyhorn = utils.planck(f_ghz, mode_data["skyhorn"])
-            bb_collimator = utils.planck(f_ghz, mode_data["collimator"])
-            bb_bolometer = utils.planck(f_ghz, mode_data["bolometer"])
+            bb_ical = utils.planck(f_ghz, mode_data[f"ical_{channel}"])
+            bb_dihedral = utils.planck(f_ghz, mode_data[f"dihedral_{channel}"])
+            bb_refhorn = utils.planck(f_ghz, mode_data[f"refhorn_{channel}"])
+            bb_skyhorn = utils.planck(f_ghz, mode_data[f"skyhorn_{channel}"])
+            bb_collimator = utils.planck(f_ghz, mode_data[f"collimator_{channel}"])
+            bb_bolometer = utils.planck(f_ghz, mode_data[f"bolometer_{channel}"])
             # bb_bolometer_rl = utils.planck(f_ghz, sky_data["bolometer_rl"])
             # bb_bolometer_lh = utils.planck(f_ghz, sky_data["bolometer_lh"])
             # bb_bolometer_ll = utils.planck(f_ghz, sky_data["bolometer_ll"])
@@ -151,15 +153,18 @@ for channel, channel_value in g.CHANNELS.items():
             )
 
             # Single vectorized operation for sky extraction
-            mode_data["sky"] = (
-                mode_data["spec"][:, cutoff : (len(otf) + cutoff)]
+            mode_data[f"sky_{channel}"] = (
+                mode_data[f"spec_{channel}"][:, cutoff : (len(otf) + cutoff)]
                 - total_emission / otf[np.newaxis, :]
             )
+
+            # make a dict with a subset of the variables that have the channel in the name
+            channel_data = {var: mode_data[var] for var in mode_data if var.endswith(f"_{channel}")}
 
             # save
             np.savez(
                 f"{g.PROCESSED_DATA_PATH}sky_{channel}_{mode}.npz",
-                **mode_data,
+                **channel_data,
             )
 
 # Print timing summary

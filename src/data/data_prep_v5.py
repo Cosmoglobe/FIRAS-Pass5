@@ -336,7 +336,7 @@ for channel, channel_i in g.CHANNELS.items():
     )
     for key in sky_data:
         if key.endswith(f"_{channel}"):
-            sky_data[key] = sky_data[key][sky_cuts]
+            sky_data[key] = sky_data[key][~sky_cuts]
 
     # engineering data based on channels
     bol_cmd_bias = en_stat["bol_cmd_bias"][:, channel_i]
@@ -422,7 +422,7 @@ for channel, channel_i in g.CHANNELS.items():
     sw_mismatches_cal = np.zeros(len(idx0_cal), dtype=bool)
     for stat_array, key in stat_words_cal:
         mismatch = stat_array[idx0_cal] != stat_array[idx1_cal]
-        cal_data[key] = np.where(~mismatch, stat_array[idx0_cal], np.nan)
+        cal_data[f"{key}_{channel}"] = np.where(~mismatch, stat_array[idx0_cal], np.nan)
         sw_mismatches_cal |= mismatch
     
     other_cuts_cal = ~(
@@ -501,7 +501,7 @@ for channel, channel_i in g.CHANNELS.items():
     sw_mismatches = np.zeros(len(idx0_sky), dtype=bool)
     for stat_array, key in stat_words_cal:  # Reuse the same list
         mismatch = stat_array[idx0_sky] != stat_array[idx1_sky]
-        sky_data[key] = np.where(~mismatch, stat_array[idx0_sky], np.nan)
+        sky_data[f"{key}_{channel}"] = np.where(~mismatch, stat_array[idx0_sky], np.nan)
         sw_mismatches |= mismatch
     print(f"    Status Word Mismatches: {sw_mismatches.sum()}")
 
@@ -523,7 +523,6 @@ for channel, channel_i in g.CHANNELS.items():
         if key.endswith(f"_{channel}"):
             sky_data[key] = sky_data[key][other_cuts]
 
-    # Using numpy interp is faster than scipy interp1d for single evaluations
     cal_data[f"bol_volt_{channel}"] = np.interp(cal_data[f"midpoint_time_s_{channel}"], eng_time_s,
                                                 bol_volt)
     sky_data[f"bol_volt_{channel}"] = np.interp(sky_data[f"midpoint_time_s_{channel}"], eng_time_s,
@@ -563,7 +562,5 @@ np.savez_compressed(
 )
 
 elapsed_time = time.time() - start_time
-print(f"\n\nAll channels processed successfully!")
-print(f"Total time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
 print(f"\n\nAll channels processed successfully!")
 print(f"Total time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")

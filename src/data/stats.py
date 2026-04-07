@@ -459,6 +459,14 @@ def electronics_model(beta, x):
     # return level + (T_knee1 / x) ** 2 + (x / T_knee2) ** alpha
     return level + A1 * (T_knee1 / x) ** 2 + A2 * (x / T_knee2) ** alpha
 
+def electronics_model2(beta, x):
+    level = beta[0]
+    T_knee = beta[1]
+    A1 = beta[2]
+    m = beta[3]
+
+    return level + A1 * (T_knee / x) ** 2 + m * x
+
 def oneoverT2(beta, x):
     level = beta[0]
     T_knee = beta[1]
@@ -506,10 +514,16 @@ def selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side):
     print(f"Residual variance for double power law: {odr_result_double_power.res_var:.3f}")
 
     model = odr.Model(electronics_model)
-    odr_obj = odr.ODR(data, model, beta0=[1, 4, 6, 0, 1, 1])
+    odr_obj = odr.ODR(data, model, beta0=[0, 4, 6, 0, 1, 1])
     # odr_obj = odr.ODR(data, model, beta0=[1, 4, 6, 0])
     odr_result_electronics = odr_obj.run()
     print(f"Residual variance for electronics model: {odr_result_electronics.res_var:.3f}")
+
+    model = odr.Model(electronics_model2)
+    odr_obj = odr.ODR(data, model, beta0=[0, 4, 1, 6])
+    # odr_obj = odr.ODR(data, model, beta0=[1, 4, 6, 0])
+    odr_result_electronics2 = odr_obj.run()
+    print(f"Residual variance for electronics model2: {odr_result_electronics2.res_var:.3f}")
 
     model = odr.Model(oneoverT2)
     odr_obj = odr.ODR(data, model, beta0=[0, 3])
@@ -520,12 +534,13 @@ def selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side):
         plt.figure()  # Create a new figure for the fit plots
         plt.errorbar(avg_temp, mu, yerr=mu_err, xerr=temp_err, fmt='o', label='Data')
         x = np.linspace(avg_temp.min() - 0.5, avg_temp.max() + 0.5, 100)
-        plt.plot(x, negative_exponential(odr_result_exp.beta, x), "r-", label="Negative exponential")
-        plt.plot(x, linear_model(odr_result_linear.beta, x), "g-", label="Linear")
-        plt.plot(x, power_law(odr_result_power.beta, x), "b-", label="Power law")
-        plt.plot(x, double_power_law(odr_result_double_power.beta, x), "m-", label="Double power law")
-        plt.plot(x, electronics_model(odr_result_electronics.beta, x), "c-", label="Electronics model")
-        plt.plot(x, oneoverT2(odr_result_oneoverT2.beta, x), "y-", label="1/T^2 model")
+        plt.plot(x, negative_exponential(odr_result_exp.beta, x), label="Negative exponential")
+        plt.plot(x, linear_model(odr_result_linear.beta, x), label="Linear")
+        plt.plot(x, power_law(odr_result_power.beta, x), label="Power law")
+        plt.plot(x, double_power_law(odr_result_double_power.beta, x), label="Double power law")
+        plt.plot(x, electronics_model(odr_result_electronics.beta, x), label="Electronics model")
+        plt.plot(x, electronics_model2(odr_result_electronics2.beta, x), label="Electronics model2")
+        plt.plot(x, oneoverT2(odr_result_oneoverT2.beta, x), label="1/T^2 model")
         # plt.ylim(min(mu-mu_err), max(mu+mu_err))
         plt.xlabel("Average High Current Temperature (K)")
         plt.ylabel("Fitted Gaussian Mean of High-Low Difference (K)")
