@@ -6,12 +6,14 @@ R = 1/OTF * sum over all emitters i (excluding XCAL) of E_i * P(T_i).
 """
 
 import argparse
+import gc
+import os
 import time
-from functools import partial
 from multiprocessing import Pool, cpu_count
 
 import matplotlib.pyplot as plt
 import numpy as np
+from astropy.io import fits
 from scipy.optimize import fmin_l_bfgs_b, minimize
 
 import globals as g
@@ -20,94 +22,23 @@ from utils import my_utils as utils
 from utils.config import gen_nyquistl
 
 
-def D(
-    Ei,
-    nui,
-    ifg,
-    channel,
-    mode,
-    gain,
-    sweeps,
-    bol_cmd_bias,
-    bol_volt,
-    temps,
-    adds_per_group,
-    fnyq_icm,
-    apod=False,
-):
-    # if apod:
-    #     fits_data = fits.open(
-    #         f"{g.PUB_MODEL}FIRAS_CALIBRATION_MODEL_{channel.upper()}{mode.upper()}.FITS"
-    #     )
-    #     apod_func = fits_data[1].data["APODIZAT"][0]
+def get_memory_usage():
+    """Get current memory usage in GB."""
+    try:
+        import psutil
+        process = psutil.Process(os.getpid())
+        return process.memory_info().rss / 1e9
+    except ImportError:
+        return None
 
-    # # subtract dither
-    # if ifg.ndim == 1:
-    #     ifg = ifg - np.median(ifg)
 
-    #     ifg = ifg / gain / sweeps
+def D(Ei, nui, ifg, channel, mode, gain, sweeps, bol_cmd_bias, bol_volt, temps, adds_per_group,
+      fnyq_icm, apod=False):
 
-    #     if apod:
-    #         ifg = ifg * apod_func
-
-    #     ifg = np.roll(ifg, -g.PEAK_POSITIONS[f"{channel}_{mode}"])
-    #     Y = np.fft.rfft(ifg)
-    #     Y = Y[nui]
-    # else:
-    #     ifg = ifg - np.median(ifg, axis=1)[:, None]
-
-    #     # "normalize" ifg by gain and sweeps
-    #     ifg = ifg / gain[:, np.newaxis] / sweeps[:, np.newaxis]
-
-    #     if apod:
-    #         ifg = ifg * apod_func
-
-    #     ifg = np.roll(ifg, -g.PEAK_POSITIONS[f"{channel}_{mode}"], axis=1)
-    #     Y = np.fft.rfft(ifg, axis=1)
-    #     Y = Y[:, nui]
-
-    # B = bolometer.get_bolometer_response_function(
-    #     channel,
-    #     mode,
-    #     bol_cmd_bias / 25.5,
-    #     bol_volt,
-    #     Tbol=temps[6],  # TODO: generalize for other channels
-    # )
-    # B = B[:, nui]
-
-    # # electronics transfer function
-    # samprate = 681.43  # from fex_samprate
-    # Z = electronics.etfunction(channel, adds_per_group, samprate, nui)
-    # # plt.plot(Z.real)
-    # # plt.plot(Z.imag)
-    # # plt.show()
-
-    # H = Ei[0]
-
-    # spec_norm = fnyq_icm * g.FAC_ETENDU * g.FAC_ADC_SCALE
-
-    # print(f"Y: {Y}")
-    # print(f"H: {H}")
-    # print(f"Z: {Z[Z == 0]}")
-    # print(f"Z: {Z.shape}")
-    # print(f"B: {B}")
-    # return Y / H / Z / B / spec_norm * g.FAC_ERG_TO_MJY
-
-    spec = ifg_spec.ifg_to_spec(
-        ifg,
-        channel,
-        mode,
-        adds_per_group,
-        bol_cmd_bias,
-        bol_volt,
-        fnyq_icm,
-        otf=Ei[0],
-        Tbol=temps[6],  # TODO: generalize for other channels
-        apod=apod,
-        gain=gain,
-        sweeps=sweeps,
-        nui=nui,
-    )
+    spec = ifg_spec.ifg_to_spec(ifg, channel, mode, adds_per_group, bol_cmd_bias, bol_volt,
+                                fnyq_icm, otf=Ei[0],
+                                Tbol=temps[6],  # TODO: generalize for other channels
+                                apod=apod, gain=gain, sweeps=sweeps, nui=nui)
 
     return spec
 
@@ -122,11 +53,14 @@ def R(Ei, nui, temps, frequencies):
         Optical transfer function a.k.a. emissivity of the XCAL.
     Ei : array_like
         2D array of the emissivities over frequency for each of the other nine emitters.
-        1: ICAL, 2: dihedral, 3: refhorn, 4: skyhorn, 5: collimator, 6: bolometer_rh, 7: bolometer_rl, 8: bolometer_lh, 9: bolometer_ll
+        1: ICAL, 2: dihedral, 3: refhorn, 4: skyhorn, 5: collimator, 6: bolometer_rh,
+        7: bolometer_rl, 8: bolometer_lh, 9: bolometer_ll
     """
     sum = np.zeros_like(temps[0], dtype=complex)
     for i in range(1, Ei.shape[0]):
-        sum += Ei[i] * utils.planck(frequencies[nui], temps[i])
+        # All bolometers (indices 6-9) use the same temperature temps[6]
+        temp_idx = min(i, 6)
+        sum += Ei[i] * utils.planck(frequencies[nui], temps[temp_idx])
 
     H = Ei[0]
 
@@ -137,39 +71,11 @@ def S(nui, frequencies, temps):
     return utils.planck(frequencies[nui], temps[0])
 
 
-def full_function(
-    Ei,
-    nui,
-    ifg,
-    channel,
-    mode,
-    gain,
-    sweeps,
-    bol_cmd_bias,
-    bol_volt,
-    temps,
-    adds_per_group,
-    fnyq_icm,
-    frequencies,
-):
-    result = (
-        D(
-            Ei,
-            nui,
-            ifg,
-            channel,
-            mode,
-            gain,
-            sweeps,
-            bol_cmd_bias,
-            bol_volt,
-            temps,
-            adds_per_group,
-            fnyq_icm,
-        )
-        - R(Ei, nui, temps, frequencies)
-        - S(nui, frequencies, temps)
-    )
+def full_function(Ei, nui, ifg, channel, mode, gain, sweeps, bol_cmd_bias, bol_volt, temps,
+                  adds_per_group, fnyq_icm, frequencies):
+    result = (D(Ei, nui, ifg, channel, mode, gain, sweeps, bol_cmd_bias, bol_volt, temps,
+                adds_per_group, fnyq_icm) - R(Ei, nui, temps, frequencies) - S(nui, frequencies,
+                                                                               temps))
 
     return np.sum(np.abs(result) ** 2)  # Use abs to handle complex numbers properly
 
@@ -190,66 +96,106 @@ def complex_to_real(z):
     return np.concatenate((np.real(z), np.imag(z)))
 
 
-def full_function_real(
-    Ei_real,
-    nui,
-    ifg,
-    channel,
-    mode,
-    gain,
-    sweeps,
-    bol_cmd_bias,
-    bol_volt,
-    temps,
-    adds_per_group,
-    fnyq_icm,
-    frequencies,
-):
+def full_function_real(Ei_real, nui, ifg, channel, mode, gain, sweeps, bol_cmd_bias, bol_volt,
+                       temps, adds_per_group, fnyq_icm, frequencies):
     """Wrapper that converts real parameters to complex for optimization."""
     Ei = real_to_complex(Ei_real)
-    return full_function(
-        Ei,
-        nui,
-        ifg,
-        channel,
-        mode,
-        gain,
-        sweeps,
-        bol_cmd_bias,
-        bol_volt,
-        temps,
-        adds_per_group,
-        fnyq_icm,
-        frequencies,
+    return full_function(Ei, nui, ifg, channel, mode, gain, sweeps, bol_cmd_bias, bol_volt, temps,
+                         adds_per_group, fnyq_icm, frequencies)
+
+
+# Global variables for multiprocessing to avoid copying large arrays
+_global_data = {}
+
+def _init_worker(ifg, channel, mode, gain, sweeps, bol_cmd_bias, bol_volt, temps, 
+                 adds_per_group, fnyq_icm, frequencies, cutoff):
+    """Initialize worker process with shared data."""
+    _global_data['ifg'] = ifg
+    _global_data['channel'] = channel
+    _global_data['mode'] = mode
+    _global_data['gain'] = gain
+    _global_data['sweeps'] = sweeps
+    _global_data['bol_cmd_bias'] = bol_cmd_bias
+    _global_data['bol_volt'] = bol_volt
+    _global_data['temps'] = temps
+    _global_data['adds_per_group'] = adds_per_group
+    _global_data['fnyq_icm'] = fnyq_icm
+    _global_data['frequencies'] = frequencies
+    _global_data['cutoff'] = cutoff
+    
+    # Load FITS data ONCE per worker to avoid repeated file I/O
+    fits_data = fits.open(
+        f"{g.PUB_MODEL}FIRAS_CALIBRATION_MODEL_{channel.upper()}{mode.upper()}.FITS"
     )
+    otf = fits_data[1].data["RTRANSFE"][0] + 1j * fits_data[1].data["ITRANSFE"][0]
+    otf = otf[np.abs(otf) > 0]
+    
+    # Pre-extract all emissivity data
+    _global_data['fits_otf'] = otf
+    _global_data['fits_ical'] = (fits_data[1].data["RICAL"][0] + 
+                                  1j * fits_data[1].data["IICAL"][0])[:len(otf)]
+    _global_data['fits_dihedra'] = (fits_data[1].data["RDIHEDRA"][0] + 
+                                     1j * fits_data[1].data["IDIHEDRA"][0])[:len(otf)]
+    _global_data['fits_refhorn'] = (fits_data[1].data["RREFHORN"][0] + 
+                                     1j * fits_data[1].data["IREFHORN"][0])[:len(otf)]
+    _global_data['fits_skyhorn'] = (fits_data[1].data["RSKYHORN"][0] + 
+                                     1j * fits_data[1].data["ISKYHORN"][0])[:len(otf)]
+    _global_data['fits_structu'] = (fits_data[1].data["RSTRUCTU"][0] + 
+                                     1j * fits_data[1].data["ISTRUCTU"][0])[:len(otf)]
+    _global_data['fits_bolomet'] = (fits_data[1].data["RBOLOMET"][0] + 
+                                     1j * fits_data[1].data["IBOLOMET"][0])[:len(otf)]
+    fits_data.close()
 
-
-def fit_single_frequency(
-    nui,
-    ifg,
-    channel,
-    mode,
-    gain,
-    sweeps,
-    bol_cmd_bias,
-    bol_volt,
-    temps,
-    adds_per_group,
-    fnyq_icm,
-    frequencies,
-):
+def fit_single_frequency(nui):
     """
     Fit emissivities for a single frequency index.
     This function is designed to be called in parallel.
+    Uses global data initialized by _init_worker.
+    1: ICAL, 2: dihedral, 3: refhorn, 4: skyhorn, 5: collimator, 6: bolometer_rh, 7: bolometer_rl,
+    8: bolometer_lh, 9: bolometer_ll
     """
-    # Convert complex initial guess to real representation
-    Ei_complex = np.ones(temps.shape[0], dtype=complex)
-    Ei_real = complex_to_real(Ei_complex)
+    # Get data from global variables
+    ifg = _global_data['ifg']
+    channel = _global_data['channel']
+    mode = _global_data['mode']
+    gain = _global_data['gain']
+    sweeps = _global_data['sweeps']
+    bol_cmd_bias = _global_data['bol_cmd_bias']
+    bol_volt = _global_data['bol_volt']
+    temps = _global_data['temps']
+    adds_per_group = _global_data['adds_per_group']
+    fnyq_icm = _global_data['fnyq_icm']
+    frequencies = _global_data['frequencies']
+    cutoff = _global_data['cutoff']
+    
+    # Get pre-loaded FITS data
+    otf = _global_data['fits_otf']
+    fits_ical = _global_data['fits_ical']
+    fits_dihedra = _global_data['fits_dihedra']
+    fits_refhorn = _global_data['fits_refhorn']
+    fits_skyhorn = _global_data['fits_skyhorn']
+    fits_structu = _global_data['fits_structu']
+    fits_bolomet = _global_data['fits_bolomet']
 
-    # First try L-BFGS-B with better epsilon for gradient approximation
+    # Set initial guess as the published emissivities (only for this frequency)
+    Ei0 = np.zeros((10, 257), dtype=complex)
+    Ei0[0][cutoff:cutoff+len(otf)] = otf
+    Ei0[1][cutoff:cutoff+len(otf)] = fits_ical
+    Ei0[2][cutoff:cutoff+len(otf)] = fits_dihedra
+    Ei0[3][cutoff:cutoff+len(otf)] = fits_refhorn
+    Ei0[4][cutoff:cutoff+len(otf)] = fits_skyhorn
+    Ei0[5][cutoff:cutoff+len(otf)] = fits_structu
+    Ei0[6][cutoff:cutoff+len(otf)] = fits_bolomet
+    Ei0[7] = Ei0[6]
+    Ei0[8] = Ei0[6]
+    Ei0[9] = Ei0[6]
+
+    Ei0_real = complex_to_real(Ei0)
+
+
     x, f, d = fmin_l_bfgs_b(
         full_function_real,
-        Ei_real,
+        Ei0_real,
         args=(
             nui,
             ifg,
@@ -275,7 +221,7 @@ def fit_single_frequency(
     if d.get("warnflag") == 2:
         result = minimize(
             full_function_real,
-            Ei_real,
+            Ei0_real,
             args=(
                 nui,
                 ifg,
@@ -319,16 +265,17 @@ if __name__ == "__main__":
     args = parser.parse_args()
     n = args.n
 
-    for channel in g.CHANNELS.keys():
-        data = np.load(f"{g.PREPROCESSED_DATA_PATH}cal_{channel}.npz", "r")
+    channels = ["ll"]
+    modes = ["ss"]
 
-        print(f"Data loaded from {g.PREPROCESSED_DATA_PATH}cal_{channel}.npz")
-        print("Preparing data for fitting...")
+    data = np.load(f"{g.PREPROCESSED_DATA_PATH}cal.npz", "r")
+    print(f"Data loaded from {g.PREPROCESSED_DATA_PATH}cal.npz")
+    print("Preparing data for fitting...")
+    for channel in channels:
+        mtm_length = data[f"mtm_length_{channel}"]
+        mtm_speed = data[f"mtm_speed_{channel}"]
 
-        mtm_length = data["mtm_length"]
-        mtm_speed = data["mtm_speed"]
-
-        for mode in g.MODES.keys():
+        for mode in modes:
             if mode == "lf" and (channel[1] == "h"):
                 continue
             if mode[0] == "s":
@@ -344,31 +291,31 @@ if __name__ == "__main__":
 
             # if n is chosen, load only the needed data
             if n is None:
-                ifg = data[f"ifg"][mode_filter]
-                xcal = data["xcal_cone"][mode_filter]  # TODO: update this
-                ical = data["ical"][mode_filter]
-                dihedral = data["dihedral"][mode_filter]
-                refhorn = data["refhorn"][mode_filter]
-                skyhorn = data["skyhorn"][mode_filter]
-                collimator = data["collimator"][mode_filter]
+                ifg = data[f"ifg_{channel}"][mode_filter]
+                xcal = data[f"xcal_cone_{channel}"][mode_filter]  # TODO: update this
+                ical = data[f"ical_{channel}"][mode_filter]
+                dihedral = data[f"dihedral_{channel}"][mode_filter]
+                refhorn = data[f"refhorn_{channel}"][mode_filter]
+                skyhorn = data[f"skyhorn_{channel}"][mode_filter]
+                collimator = data[f"collimator_{channel}"][mode_filter]
                 # TODO: fit for all bolometers
-                bol = data["bolometer"][mode_filter]
+                bol = data[f"bolometer_{channel}"][mode_filter]
 
-                adds_per_group = data["adds_per_group"][mode_filter]
-                sweeps = data["sweeps"][mode_filter]
+                adds_per_group = data[f"adds_per_group_{channel}"][mode_filter]
+                sweeps = data[f"sweeps_{channel}"][mode_filter]
 
-                bol_cmd_bias = data[f"bol_cmd_bias"][mode_filter]
-                bol_volt = data[f"bol_volt"][mode_filter]
-                gain = data[f"gain"][mode_filter]
+                bol_cmd_bias = data[f"bol_cmd_bias_{channel}"][mode_filter]
+                bol_volt = data[f"bol_volt_{channel}"][mode_filter]
+                gain = data[f"gain_{channel}"][mode_filter]
             else:
-                ifg = data[f"ifg"][mode_filter][n]
-                xcal = data["xcal_cone"][mode_filter][n]  # TODO: update this
-                ical = data["ical"][mode_filter][n]
-                dihedral = data["dihedral"][mode_filter][n]
-                refhorn = data["refhorn"][mode_filter][n]
-                skyhorn = data["skyhorn"][mode_filter][n]
-                collimator = data["collimator"][mode_filter][n]
-                bol = data["bolometer"][mode_filter][n]
+                ifg = data[f"ifg_{channel}"][mode_filter][n]
+                xcal = data[f"xcal_cone_{channel}"][mode_filter][n]  # TODO: update this
+                ical = data[f"ical_{channel}"][mode_filter][n]
+                dihedral = data[f"dihedral_{channel}"][mode_filter][n]
+                refhorn = data[f"refhorn_{channel}"][mode_filter][n]
+                skyhorn = data[f"skyhorn_{channel}"][mode_filter][n]
+                collimator = data[f"collimator_{channel}"][mode_filter][n]
+                bol = data[f"bolometer_{channel}"][mode_filter][n]
 
             # plot a random ifg to check
             n = np.random.randint(ifg.shape[0]) if ifg.ndim == 2 else n
@@ -376,6 +323,8 @@ if __name__ == "__main__":
             plt.plot(ifg[n] if ifg.ndim == 2 else ifg)
             plt.title(f"Random IFG at index {n}")
             plt.savefig(f"calibration/output/random_ifgs/{n}.png")
+            print(f"Random IFG plotted and saved for index {n} in calibration/output/random_ifgs/"
+                  f"{n}.png")
 
             # print(f"data keys: {list(data.keys())}")
 
@@ -395,42 +344,43 @@ if __name__ == "__main__":
 
             frequencies = utils.generate_frequencies(channel, mode, 257)
 
-            fnyq = gen_nyquistl(
-                "../reference/fex_samprate.txt", "../reference/fex_nyquist.txt", "int"
-            )
+            fnyq = gen_nyquistl("../reference/fex_samprate.txt", "../reference/fex_nyquist.txt",
+                                "int")
             frec = 4 * (g.CHANNELS[channel] % 2) + g.MODES[mode]
             fnyq_icm = fnyq["icm"][frec]
 
-            solution = np.zeros(
-                (g.SPEC_SIZE, temps.shape[0]), dtype=complex
-            )  # 10 emissivities to fit
+            # 10 emissivities to fit
+            solution = np.zeros((g.SPEC_SIZE, temps.shape[0]), dtype=complex)  
 
             # Determine number of processes to use
-            n_processes = cpu_count()
+            n_processes = cpu_count() // 10
             print(f"Using {n_processes} CPU cores for parallel processing")
+            
+            mem = get_memory_usage()
+            if mem:
+                print(f"Memory before parallel processing: {mem:.2f} GB")
 
-            # Create partial function with fixed arguments
-            fit_func = partial(
-                fit_single_frequency,
-                ifg=ifg,
-                channel=channel,
-                mode=mode,
-                gain=gain,
-                sweeps=sweeps,
-                bol_cmd_bias=bol_cmd_bias,
-                bol_volt=bol_volt,
-                temps=temps,
-                adds_per_group=adds_per_group,
-                fnyq_icm=fnyq_icm,
-                frequencies=frequencies,
-            )
+            cutoff = 5 if mode[1] == "s" else 7
 
             start0 = time.time()
             print(f"Starting parallel optimization for {g.SPEC_SIZE} frequencies...")
 
-            # Parallel processing
-            with Pool(processes=n_processes) as pool:
-                results = pool.map(fit_func, range(g.SPEC_SIZE))
+            # Parallel processing with initializer to avoid copying large arrays
+            with Pool(processes=n_processes, initializer=_init_worker,
+                      initargs=(ifg, channel, mode, gain, sweeps, bol_cmd_bias, bol_volt, temps,
+                                adds_per_group, fnyq_icm, frequencies, cutoff)) as pool:
+                # Use imap to maintain order and track progress
+                results = []
+                for i, result in enumerate(pool.imap(fit_single_frequency, range(g.SPEC_SIZE)), 1):
+                    results.append(result)
+                    # Print progress every 10 frequencies or at the end
+                    if i % 10 == 0 or i == g.SPEC_SIZE:
+                        elapsed = time.time() - start0
+                        rate = i / elapsed
+                        remaining = (g.SPEC_SIZE - i) / rate if rate > 0 else 0
+                        print(f"Progress: {i}/{g.SPEC_SIZE} frequencies complete"
+                              f" ({i/g.SPEC_SIZE*100:.1f}%) | Elapsed: {elapsed:.1f}s | ETA: "
+                              f"{remaining:.1f}s")
 
             # Collect results
             failed_fits = 0
@@ -443,18 +393,22 @@ if __name__ == "__main__":
             print(f"\n{'='*60}")
             print(f"Optimization Complete!")
             print(f"{'='*60}")
-            print(
-                f"Total time taken: {total_seconds:.2f} seconds ({total_seconds/60:.2f} minutes)"
-            )
-            print(
-                f"Average time per frequency: {total_seconds/g.SPEC_SIZE:.2f} seconds"
-            )
-            print(
-                f"Speed improvement: {149.78/(total_seconds/g.SPEC_SIZE):.1f}x faster than before"
-            )
+            print(f"Total time taken: {total_seconds:.2f} seconds ({total_seconds/60:.2f} minutes)")
+            print(f"Average time per frequency: {total_seconds/g.SPEC_SIZE:.2f} seconds")
+            print(f"Speed improvement: {149.78/(total_seconds/g.SPEC_SIZE):.1f}x faster than before")
 
             # save solution
-            np.save(
-                f"calibration/output/fitted_emissivities_{channel}_{mode}.npy", solution
-            )
+            np.save(f"calibration/output/fitted_emissivities_{channel}_{mode}.npy", solution)
+            
+            # Explicit cleanup to free memory before next iteration
+            del ifg, xcal, ical, dihedral, refhorn, skyhorn, collimator, bol
+            del temps, frequencies, solution, results
+            if 'adds_per_group' in locals():
+                del adds_per_group, sweeps, bol_cmd_bias, bol_volt, gain
+            gc.collect()
+            
+            mem = get_memory_usage()
+            if mem:
+                print(f"Memory after cleanup for {channel}_{mode}: {mem:.2f} GB")
+            
             n = None

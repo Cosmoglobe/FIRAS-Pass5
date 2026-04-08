@@ -1,6 +1,7 @@
-import globals as g
 import matplotlib
 import scipy.odr as odr
+
+import globals as g
 
 matplotlib.use('Agg')  # Use non-interactive backend for multiprocessing
 import os
@@ -435,16 +436,19 @@ def debiase_hi(beta, hi, lo, element, side, channel):
             fig_debias, ax_debias = plt.subplots(figsize=(12, 6))
             ax_debias.set_xlabel("Record Index")
             ax_debias.set_ylabel("Temperature (K)")
-            ax_debias.set_title(f"Debiasing High Current Temperatures for {element} ({side.upper()}) - {channel.upper()}")
+            ax_debias.set_title(f"Debiasing High Current Temperatures for {element} "
+                                f"({side.upper()}) - {channel.upper()}")
             ax_debias.plot(x[i:i+xsize], lo[i:i+xsize], label='Low Current')
             ax_debias.plot(x[i:i+xsize], hi[i:i+xsize],
                     label='High Current', ls='None', marker='.', ms=4)
             
             ax_debias.set_ylabel("Temperature (K)")
             ax_debias.set_xlabel("Record Index")
-            ax_debias.set_title(f"Temperatures measured for the {element_long_names[element]}")
+            ax_debias.set_title(f"Temperatures measured for the {element_long_names[element]} "
+                                f"{side.upper()} side")
             ax_debias.legend()
-            fig_debias.savefig(f"data/output/debiase_hi/01_timeseries/{element}/{side}/{channel}/{i}_0.png")
+            fig_debias.savefig(f"data/output/debiase_hi/01_timeseries/{element}/{side}/{channel}/"
+                               f"{i}_0.png")
             plt.close(fig_debias)
 
             fig_debias, ax_debias = plt.subplots(figsize=(12, 6))
@@ -454,10 +458,12 @@ def debiase_hi(beta, hi, lo, element, side, channel):
             
             ax_debias.set_ylabel("Temperature (K)")
             ax_debias.set_xlabel("Record Index")
-            ax_debias.set_title(f"Temperatures measured for the {element_long_names[element]}")
+            ax_debias.set_title(f"Temperatures measured for the {element_long_names[element]} "
+                                f"{side.upper()} side after debiasing")
             ax_debias.legend()
             fig_debias.savefig(f"data/output/debiase_hi/01_timeseries/{element}/{side}/{channel}/{i}_1.png")
             plt.close(fig_debias)
         print("Plotted check 1 -------------------------------------------------------------------")
 
+    return debiased_hi
     return debiased_hi
