@@ -2,22 +2,16 @@
 So for this version we will keep each channel separate and use the midpoint_time to interpolate to get the temperatures.
 """
 
+import time
+
 import astropy.units as u
 import h5py
 import matplotlib
-
-import data.utils.my_utils as data_utils
-import globals as g
-
-matplotlib.use('Agg')  # Use non-interactive backend
-import os
-import time
-from functools import partial
-from multiprocessing import Pool
-
 import matplotlib.pyplot as plt
 import numpy as np
 
+import data.utils.my_utils as data_utils
+import globals as g
 from data import stats
 from engineering_timing.get_interpolated_times import get_data, get_interp
 
@@ -105,8 +99,8 @@ for channel, channel_i in g.CHANNELS.items():
 
     collect_time = science_data["collect_time"]
     all_data[f"midpoint_time_{channel}"] = np.sort(collect_time["midpoint_time"][:])
-    all_data[f"midpoint_time_s_{channel}"] = (collect_time["midpoint_time"][:] * (100 * u.ns)).to("s")
-    all_data[f"midpoint_time_gmt_{channel}"] = data_utils.binary_to_gmt(collect_time["midpoint_time"][:])
+    all_data[f"midpoint_time_s_{channel}"] = (all_data[f"midpoint_time_{channel}"] * (100 * u.ns)).to("s")
+    all_data[f"midpoint_time_gmt_{channel}"] = data_utils.binary_to_gmt(all_data[f"midpoint_time_{channel}"])
 
     attitude = science_data["attitude"]
     all_data[f"cel_lon_{channel}"] = attitude["ra"][:] * fact
@@ -123,6 +117,20 @@ for channel, channel_i in g.CHANNELS.items():
     all_data[f"solution_{channel}"] = attitude["solution"][:]
 
     print(f"\n\nChannel: {channel.upper()}")
+
+    # if channel is rh then we want to get rid of the first point (weird timing)
+    if channel == "rh":
+        for key in all_data:
+            if key.endswith(f"_{channel}"):
+                all_data[key] = all_data[key][1:]
+
+    # DEBUG
+    plt.plot(all_data[f"midpoint_time_s_{channel}"])
+    plt.savefig(f"data/output/midpoint_time/{channel}", dpi=150)
+    plt.close()
+    print(f"Midpoint time range for channel {channel.upper()}: {all_data[f'midpoint_time_s_{channel}'].min()} to {all_data[f'midpoint_time_s_{channel}'].max()}")
+    print(f"Number of zeros: {(all_data[f'midpoint_time_s_{channel}'] == 0).sum()}")
+    print(f"First, second, third values: {all_data[f'midpoint_time_s_{channel}'][:3]}")
 
     stats.table3_4(all_data[f"xcal_pos_{channel}"], all_data[f"mtm_length_{channel}"], all_data[f"mtm_speed_{channel}"])
 
@@ -173,7 +181,7 @@ for channel, channel_i in g.CHANNELS.items():
     # the next table to reproduce needs the ICAL temperatures so we need to match them now
     # Interpolate temperatures for sky data
     # the dihdral operates at different temperatures and thus we use a different method for it
-    # same for the collimator
+    # same for the collimator and mirror
 
     print(f"Testing new way for de-biasing temperatures for ICAL and using the previous one for the rest")
     print(f"Taking the average of both sides")
@@ -265,12 +273,30 @@ for channel, channel_i in g.CHANNELS.items():
 
     temps[f"a_lo_dihedral"] = interpolators[f"a_lo_dihedral"](midpoint_time_s[channel])
     temps[f"b_lo_dihedral"] = interpolators[f"b_lo_dihedral"](midpoint_time_s[channel])
-    all_data[f"dihedral_{channel}"] = (temps[f"a_lo_dihedral"] + temps[f"b_lo_dihedral"]) / 2.0
+    all_data[f"dihedral_{channel}"] = (temps[f"a_lo_dihedral"] + temps[f"b_lo_dihedral"]) * 0.5
 
     temps[f"a_lo_collimator"] = interpolators[f"a_lo_collimator"](midpoint_time_s[channel])
     all_data[f"collimator_{channel}"] = temps[f"a_lo_collimator"]
+    plt.plot(midpoint_time_s[channel], temps[f"a_lo_collimator"], label="a_lo_collimator")
+    plt.savefig(f"data/output/temperatures/collimator/{channel}", dpi=150)
+    plt.close()
 
-    for element in ["dihedral", "collimator"]:
+    temps[f"a_lo_mirror"] = interpolators[f"a_lo_mirror"](midpoint_time_s[channel])
+    temps[f"b_lo_mirror"] = interpolators[f"b_lo_mirror"](midpoint_time_s[channel])
+    # check for nans
+    if np.isnan(temps[f"a_lo_mirror"]).any() or np.isnan(temps[f"b_lo_mirror"]).any():
+        print(f"Warning: NaN values found in mirror temperatures for channel {channel.upper()}.")
+        quit()
+    # plot to double check there is nothing wrong with these - DEBUG
+    plt.plot(midpoint_time_s[channel], temps[f"a_lo_mirror"], label="a_lo_mirror")
+    plt.plot(midpoint_time_s[channel], temps[f"b_lo_mirror"], label="b_lo_mirror")
+    plt.savefig(f"data/output/temperatures/mirror/{channel}", dpi=150)
+    plt.close()
+    print("Plotted mirror temperatures for debugging - check the plots to make sure there are no issues.")
+    
+    all_data[f"mirror_{channel}"] = (temps[f"a_lo_mirror"] + temps[f"b_lo_mirror"]) * 0.5
+
+    for element in ["dihedral", "collimator", "mirror"]:
         cal_data[f"{element}_{channel}"] = all_data[f"{element}_{channel}"][cal_mask[channel]]
         sky_data[f"{element}_{channel}"] = all_data[f"{element}_{channel}"][sky_mask[channel]]
 
