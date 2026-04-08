@@ -125,6 +125,7 @@ for channel, channel_i in g.CHANNELS.items():
                 all_data[key] = all_data[key][1:]
 
     # DEBUG
+    plt.close("all")
     plt.plot(all_data[f"midpoint_time_s_{channel}"])
     plt.savefig(f"data/output/midpoint_time/{channel}", dpi=150)
     plt.close()
@@ -560,7 +561,5 @@ np.savez_compressed(
 )
 
 elapsed_time = time.time() - start_time
-print(f"\n\nAll channels processed successfully!")
-print(f"Total time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
 print(f"\n\nAll channels processed successfully!")
 print(f"Total time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
