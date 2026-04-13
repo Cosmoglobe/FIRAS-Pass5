@@ -2,7 +2,7 @@ import astropy.units as u
 import h5py
 import numpy as np
 
-# DATA_DIR = '/home/dwatts/Commander/commander3/todscripts/firas/src/engineering_timing'
+#DATA_DIR = '/home/dwatts/Commander/commander3/todscripts/firas/src/engineering_timing'
 DATA_DIR = "/mn/stornext/d16/cmbco/ola/firas/initial_data/"
 
 plot = True
@@ -13,19 +13,9 @@ lens_grt = [
     1,
     1,
     1,
-    4,
+    1,1,1,1,
     1,
-    4,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    4,
-    1,
-    4,
+    1,1,1,1,
     1,
     1,
     1,
@@ -33,19 +23,29 @@ lens_grt = [
     1,
     1,
     1,
-    4,
+    1,1,1,1,
     1,
-    4,
-    1,
-    1,
+    1,1,1,1,
     1,
     1,
     1,
     1,
     1,
-    4,
     1,
-    4,
+    1,
+    1,1,1,1,
+    1,
+    1,1,1,1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,1,1,1,
+    1,
+    1,1,1,1,
     1,
     1,
 ]
@@ -58,9 +58,15 @@ names_en_analog_grt = [
     "a_lo_refhorn",
     "a_lo_ical",
     "a_lo_dihedral",
-    "a_lo_bol_assem",
+    "a_lo_bol_assem_1",
+    "a_lo_bol_assem_2",
+    "a_lo_bol_assem_3",
+    "a_lo_bol_assem_4",
     "a_lo_mirror",
-    "a_lo_cal_resistors",
+    "a_lo_cal_resistors_1",
+    "a_lo_cal_resistors_2",
+    "a_lo_cal_resistors_3",
+    "a_lo_cal_resistors_4",
     "a_lo_xcal_cone",
     "a_lo_collimator",
     "a_hi_xcal_tip",
@@ -68,9 +74,15 @@ names_en_analog_grt = [
     "a_hi_refhorn",
     "a_hi_ical",
     "a_hi_dihedral",
-    "a_hi_bol_assem",
+    "a_hi_bol_assem_1",
+    "a_hi_bol_assem_2",
+    "a_hi_bol_assem_3",
+    "a_hi_bol_assem_4",
     "a_hi_mirror",
-    "a_hi_cal_resistors",
+    "a_hi_cal_resistors_1",
+    "a_hi_cal_resistors_2",
+    "a_hi_cal_resistors_3",
+    "a_hi_cal_resistors_4",
     "a_hi_xcal_cone",
     "a_hi_collimator",
     "b_lo_xcal_tip",
@@ -78,9 +90,15 @@ names_en_analog_grt = [
     "b_lo_refhorn",
     "b_lo_ical",
     "b_lo_dihedral",
-    "b_lo_bol_assem",
+    "b_lo_bol_assem_1",
+    "b_lo_bol_assem_2",
+    "b_lo_bol_assem_3",
+    "b_lo_bol_assem_4",
     "b_lo_mirror",
-    "b_lo_cal_resistors",
+    "b_lo_cal_resistors_1",
+    "b_lo_cal_resistors_2",
+    "b_lo_cal_resistors_3",
+    "b_lo_cal_resistors_4",
     "b_lo_xcal_cone",
     "b_lo_collimator",
     "b_hi_xcal_tip",
@@ -88,9 +106,15 @@ names_en_analog_grt = [
     "b_hi_refhorn",
     "b_hi_ical",
     "b_hi_dihedral",
-    "b_hi_bol_assem",
+    "b_hi_bol_assem_1",
+    "b_hi_bol_assem_2",
+    "b_hi_bol_assem_3",
+    "b_hi_bol_assem_4",
     "b_hi_mirror",
-    "b_hi_cal_resistors",
+    "b_hi_cal_resistors_1",
+    "b_hi_cal_resistors_2",
+    "b_hi_cal_resistors_3",
+    "b_hi_cal_resistors_4",
     "b_hi_xcal_cone",
     "b_hi_collimator",
 ]
@@ -118,7 +142,6 @@ def get_data():
     filters = filters[reord]
 
     ind0 = 0
-    print("getting offsets")
     for i in range(len(names_en_analog_grt)):
         grts[names_en_analog_grt[i]] = grt_arr[:, ind0 : ind0 + lens_grt[i]].flatten()
         grts[names_en_analog_grt[i]] = grts[names_en_analog_grt[i]][reord]
@@ -138,13 +161,30 @@ def get_data():
         "refhorn",
         "ical",
         "dihedral",
+        "bol_assem_1",
+        "bol_assem_2",
+        "bol_assem_3",
+        "bol_assem_4",
         "mirror",
+        "cal_resistors_1",
+        "cal_resistors_2",
+        "cal_resistors_3",
+        "cal_resistors_4",
         "xcal_cone",
         "collimator",
     ]
-    offset_ind = [0, 1, 2, 3, 4, 9, 14, 15]
 
-    print("getting the grt times")
+    # Recall that the full list from the original python port is
+    #  'xcal_tip',  'skyhorn', 'refhorn',       'ical',      'dihedral',
+    #  'bol_assem', 'mirror',  'cal_resistors', 'xcal_cone', 'collimator',
+    # and bol_assem and cal_resistors are both blocks of four.
+
+
+    # 5--8 are bol_assem
+    # 10--13 are calibration resistors
+
+    offset_ind = np.arange(16)
+
     ifg_time_offset = 36 * u.s
     for side in ["a", "b"]:
         for i, grt in enumerate(grt_names):
@@ -152,9 +192,12 @@ def get_data():
                 continue
             not_ok = grts[f"{side}_lo_{grt}"] == -9999
             grts[f"{side}_lo_{grt}"][not_ok] = np.nan
-            grts[f"{side}_hi_{grt}"][not_ok] = np.nan
             not_ok = grts[f"{side}_hi_{grt}"] == -9999
+            grts[f"{side}_hi_{grt}"][not_ok] = np.nan
+
+            not_ok = grts[f"{side}_lo_{grt}"] == -9999
             grts[f"{side}_lo_{grt}"][not_ok] = np.nan
+            not_ok = grts[f"{side}_hi_{grt}"] == -9999
             grts[f"{side}_hi_{grt}"][not_ok] = np.nan
 
             grts[f"{side}_lo_{grt}"][filters] = np.nan
@@ -171,43 +214,43 @@ def get_data():
             grt_times[f"{side}_lo_{grt}"] += offset_ind[i] * u.s
             grt_times[f"{side}_hi_{grt}"] += offset_ind[i] * u.s
 
-            # remove grts with nans
-            grt_times[f"{side}_lo_{grt}"] = grt_times[f"{side}_lo_{grt}"][
-                ~np.isnan(grts[f"{side}_lo_{grt}"])
-            ]
-            grt_times[f"{side}_hi_{grt}"] = grt_times[f"{side}_hi_{grt}"][
-                ~np.isnan(grts[f"{side}_hi_{grt}"])
-            ]
-
-            grts[f"{side}_lo_{grt}"] = grts[f"{side}_lo_{grt}"][
-                ~np.isnan(grts[f"{side}_lo_{grt}"])
-            ]
-            grts[f"{side}_hi_{grt}"] = grts[f"{side}_hi_{grt}"][
-                ~np.isnan(grts[f"{side}_hi_{grt}"])
-            ]
-
     return grts, grt_times
 
 
 def test_plot():
     import matplotlib.pyplot as plt
 
+
+
+
+    grt = "cal_resistors_1"
+    grt = "bol_assem_2"
     grt = "ical"
     current = "lo"
     side = "a"
 
+    grts, grt_times = get_data()
+    interpolators = get_interp(grts, grt_times)
+
+    time = grt_times[f"{side}_{current}_{grt}"]
+
+    inds = (np.arange(len(time)) > 108_000) & (np.arange(len(time)) < 110_000)
+    #inds = (np.arange(len(time)) > 100_000) & (np.arange(len(time)) < 102_000)
+
     plt.plot(
         grt_times[f"{side}_{current}_{grt}"][inds],
         grts[f"{side}_{current}_{grt}"][inds],
+        label=current,
     )
 
     current = "hi"
     plt.plot(
         grt_times[f"{side}_{current}_{grt}"][inds],
         grts[f"{side}_{current}_{grt}"][inds],
+        label=current,
     )
+    plt.legend()
 
-    grt = "ical"
     current = "lo"
     side = "a"
 
@@ -217,11 +260,13 @@ def test_plot():
         grt_times[f"{side}_{current}_{grt}"][inds],
         grts[f"{side}_{current}_{grt}"][inds],
         "o",
+        label=current,
     )
 
     t = grt_times[f"{side}_{current}_{grt}"][inds]
     t_lin = np.linspace(t.min(), t.max(), 10 * len(t))
-    plt.plot(t, interpolators[f"{side}_{current}_{grt}"](t))
+    plt.plot(t, interpolators[f"{side}_{current}_{grt}"](t), label='Interpolator')
+    plt.legend()
     plt.show()
 
 
