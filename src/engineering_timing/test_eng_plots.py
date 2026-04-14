@@ -862,7 +862,6 @@ for side in ['a', 'b']:
         grt_times[f'{side}_lo_{grt}'] += offset_ind[i]*u.s
         grt_times[f'{side}_hi_{grt}'] += offset_ind[i]*u.s
 
-asdf
 
 '''
 for side in ['a', 'b']:
