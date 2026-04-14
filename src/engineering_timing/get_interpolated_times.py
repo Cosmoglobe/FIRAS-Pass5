@@ -1,5 +1,6 @@
 import astropy.units as u
 import h5py
+import matplotlib.pyplot as plt
 import numpy as np
 
 #DATA_DIR = '/home/dwatts/Commander/commander3/todscripts/firas/src/engineering_timing'
@@ -7,48 +8,7 @@ DATA_DIR = "/mn/stornext/d16/cmbco/ola/firas/initial_data/"
 
 plot = True
 
-lens_grt = [
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,1,1,1,
-    1,
-    1,1,1,1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,1,1,1,
-    1,
-    1,1,1,1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,1,1,1,
-    1,
-    1,1,1,1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,1,1,1,
-    1,
-    1,1,1,1,
-    1,
-    1,
-]
+lens_grt = np.ones(64, dtype=int)
 
 names_en_analog_grt = [
     # grts
@@ -149,8 +109,6 @@ def get_data():
         ind0 += lens_grt[i]
     time = bin_time[reord]
 
-    inds = (np.arange(len(time)) > 0) & (np.arange(len(time)) < 580_000)
-    inds = (np.arange(len(time)) > 100_000) & (np.arange(len(time)) < 125_000)
     time = time.to("s")
 
     grt_times = {}
@@ -267,7 +225,7 @@ def test_plot():
     t_lin = np.linspace(t.min(), t.max(), 10 * len(t))
     plt.plot(t, interpolators[f"{side}_{current}_{grt}"](t), label='Interpolator')
     plt.legend()
-    plt.show()
+    plt.savefig(f"engineering_timing/output/{grt}_{side}_{current}.png")
 
 
 def get_interp(grts, grt_times):
@@ -282,6 +240,22 @@ def get_interp(grts, grt_times):
         interpolators[key] = f
     return interpolators
 
+def test_offsets():
+    grts, grt_times = get_data()
+    # inds = [109_500, 109_600]
+    inds = [527_240, 527_340]
+
+    grt = "bol_assem_4"
+    grt2 = "bol_assem_1"
+    plt.plot(grt_times[f'a_lo_{grt}'][inds[0]:inds[1]], grts[f'a_lo_{grt}'][inds[0]:inds[1]]/np.nanmax(grts[f'a_lo_{grt}'][inds[0]:inds[1]]), label=f'a_lo_{grt}')
+    plt.plot(grt_times[f'b_lo_{grt}'][inds[0]:inds[1]], grts[f'b_lo_{grt}'][inds[0]:inds[1]]/np.nanmax(grts[f'b_lo_{grt}'][inds[0]:inds[1]]), label=f'b_lo_{grt}')
+
+    plt.plot(grt_times[f'a_lo_{grt2}'][inds[0]:inds[1]], grts[f'a_lo_{grt2}'][inds[0]:inds[1]]/np.nanmax(grts[f'a_lo_{grt2}'][inds[0]:inds[1]]), label=f'a_lo_{grt2}')
+    plt.plot(grt_times[f'b_lo_{grt2}'][inds[0]:inds[1]], grts[f'b_lo_{grt2}'][inds[0]:inds[1]]/np.nanmax(grts[f'b_lo_{grt2}'][inds[0]:inds[1]]), label=f'b_lo_{grt2}')
+
+    plt.legend()
+    plt.savefig(f"engineering_timing/output/{grt}_offsets_vs_{grt2}.png")
 
 if __name__ == "__main__":
-    test_plot()
+    # test_plot()
+    test_offsets()
