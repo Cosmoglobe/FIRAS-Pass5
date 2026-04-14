@@ -16,15 +16,13 @@ from healpy.rotator import Rotator
 import globals as g
 import utils.my_utils as utils
 
-fits_path = "/mn/stornext/u3/aimartin/d5/firas-reanalysis/Commander/commander3/todscripts/firas/output/fits_files/"
-
 if g.COORDINATES == "G":
     folder = "galactic"
 
 elif g.COORDINATES == "E":
     folder = "ecliptic"
 
-curr_path = f"{fits_path}maps/hit_maps/{folder}/"
+curr_path = f"{g.FITS_PATH}maps/hit_maps/{folder}/"
 # check if curr_path exists and create it if it doesn't
 if not os.path.exists(curr_path):
     os.makedirs(curr_path)
@@ -39,11 +37,11 @@ for channel in g.CHANNELS_PLOT:
                 f"{g.PROCESSED_DATA_PATH}sky_{channel}_{mode}.npz", allow_pickle=True
             )
 
-            sky = data["sky"]
+            sky = data[f"sky_{channel}"]
             # scan = data[f"scan_{mode}"]
             if g.COORDINATES == "G":
-                gal_lat = data[f"gal_lat"]
-                gal_lon = data[f"gal_lon"]
+                gal_lat = data[f"gal_lat_{channel}"]
+                gal_lon = data[f"gal_lon_{channel}"]
                 pix_gal = hp.ang2pix(g.NSIDE, gal_lon, gal_lat, lonlat=True).astype(int)
                 # pix_gal = data[f"pix_gal_{mode}"].astype(int)
             elif g.COORDINATES == "E":
@@ -146,7 +144,7 @@ for channel in g.CHANNELS_PLOT:
                     plt.close()
                 if g.FITS:
                     fits.writeto(
-                        f"{fits_path}maps/frequency_maps/{channel}_{mode}/galactic/{int(f_ghz[f'{channel}_{mode}'][freq]):04d}_nside{g.NSIDE}.fits",
+                        f"{g.FITS_PATH}maps/frequency_maps/{channel}_{mode}/galactic/{int(f_ghz[f'{channel}_{mode}'][freq]):04d}_nside{g.NSIDE}.fits",
                         m[:, freq],
                         overwrite=True,
                     )
@@ -294,7 +292,7 @@ if g.JOINT:
     )[:, len(f_ghz["ll_ss"]) :] - monopole
     m_joint[joint_mask] = np.nan  # hp.UNSEEN
 
-    curr_path = f"{fits_path}maps/joint/{folder}/"
+    curr_path = f"{g.FITS_PATH}maps/joint/{folder}/"
     if not os.path.exists(curr_path):
         os.makedirs(curr_path)
     for freq in range(len(f_ghz["ll_ss"]), len(f_ghz["lh_ss"])):

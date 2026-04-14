@@ -7,10 +7,11 @@ user = os.environ["USER"]
 # data paths
 ORIGINAL_DATA = "/mn/stornext/d16/cmbco/ola/firas/initial_data/fdq_sdf_new.h5"
 ORIGINAL_DATA_ENG = "/mn/stornext/d16/cmbco/ola/firas/initial_data/fdq_eng_new.h5"
-PREPROCESSED_DATA_PATH = f"/mn/stornext/d5/data/{user}/firas-reanalysis/FIRAS-Pass5/data/"
-PROCESSED_DATA_PATH = f"/mn/stornext/d5/data/{user}/firas-reanalysis/FIRAS-Pass5/data/"
+PREPROCESSED_DATA_PATH = f"/mn/stornext/d5/data/{user}/firas-reanalysis/FIRAS-Pass5/data/preprocessed/"
+PROCESSED_DATA_PATH = f"/mn/stornext/d5/data/{user}/firas-reanalysis/FIRAS-Pass5/data/processed/"
 
 SAVE_PATH = f"/mn/stornext/d16/www_cmb/{user}/firas/"
+FITS_PATH = f"/mn/stornext/d5/data/aimartin/firas-reanalysis/FIRAS-Pass5/output/fits_files/"
 
 # original pipeline parameters
 PUB_MODEL = "/mn/stornext/d16/cmbco/ola/firas/pub_calibration_model/"
