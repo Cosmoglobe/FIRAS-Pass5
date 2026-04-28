@@ -46,7 +46,7 @@ plt.rcParams.update(
 
 print("Loading calibration data...")
 for channel in g.CHANNELS:
-    data = np.load(f"{g.PREPROCESSED_DATA_PATH}cal_{channel}.npz")
+    data = np.load(f"{g.PREPROCESSED_DATA_PATH}cal.npz")
 
     mtm_length = data["mtm_length"][:]
     mtm_speed = data["mtm_speed"][:]

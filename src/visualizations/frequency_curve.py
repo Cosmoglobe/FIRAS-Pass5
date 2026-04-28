@@ -17,7 +17,6 @@ import utils.my_utils as utils
 modes = {"ss": 0, "lf": 3}
 channels = {"rh": 0, "rl": 1, "lh": 2, "ll": 3}
 
-path = "/mn/stornext/u3/aimartin/d5/firas-reanalysis/Commander/commander3/todscripts/firas/output/fits_files/"
 firas_path = "maps/frequency_maps/"
 
 spectral_lines = [
@@ -67,7 +66,7 @@ for channel in g.CHANNELS_PLOT:
             m = np.zeros((g.NPIX, len(f_ghz)))
             for fi, freq in enumerate(f_ghz):
                 m[:, fi] = fits.open(
-                    f"{path}{firas_path}{channel}_{mode}/galactic/{int(freq):04d}_nside32.fits"
+                    f"{g.FITS_PATH}{firas_path}{channel}_{mode}/galactic/{int(freq):04d}_nside32.fits"
                 )[0].data
 
             # high_lat_map = np.where(

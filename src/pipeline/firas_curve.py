@@ -25,16 +25,17 @@ for mode in modes.keys():
     for channel in channels.keys():
         data = np.load(f"{g.PROCESSED_DATA_PATH}sky_{channel}_{mode}.npz", allow_pickle=True)
         
-        length_filter = data["mtm_length"] == (0 if mode[0] == "s" else 1)
-        speed_filter = data["mtm_speed"] == (0 if mode[1] == "s" else 1)
+        length_filter = data[f"mtm_length_{channel}"] == (0 if mode[0] == "s" else 1)
+        speed_filter = data[f"mtm_speed_{channel}"] == (0 if mode[1] == "s" else 1)
         mode_filter = length_filter & speed_filter
 
         mode_data = {}
         for var in data.files:
             mode_data[var] = data[var][mode_filter]
 
-        sky = mode_data["sky"]
-        pix_gal = hp.ang2pix(g.NSIDE, mode_data["gal_lon"], mode_data["gal_lat"], lonlat=True).astype(int)
+        sky = mode_data[f"sky_{channel}"]
+        pix_gal = hp.ang2pix(g.NSIDE, mode_data[f"gal_lon_{channel}"],
+                             mode_data[f"gal_lat_{channel}"], lonlat=True).astype(int)
         f_ghz = utils.generate_frequencies(channel, mode)
 
         print(f"Calculating BB curve for {channel.upper()}{mode.upper()}...")
