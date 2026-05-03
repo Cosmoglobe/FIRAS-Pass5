@@ -261,13 +261,6 @@ def fit_gaussian(hi, lo, channel, element, side, plateau=0):
 
     diff = hi - lo
 
-    # check for non-finite values in diff
-    if not np.isfinite(diff).all():
-        print(f"Warning: Non-finite values found in the thermometry data for {element} {side} "
-              f"{channel} plateau {plateau}. These will be ignored in the Gaussian fit.")
-        diff = diff[np.isfinite(diff)]
-        n = len(diff)  # Update n after removing non-finite values
-
     # fit the normal distribution to the data
     mu, std = norm.fit(diff, loc=0.015, scale=0.005)
     mu_err = std / np.sqrt(n)  # Standard error of the mean
