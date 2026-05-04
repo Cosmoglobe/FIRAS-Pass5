@@ -93,19 +93,20 @@ for channel, channel_value in g.CHANNELS.items():
             # frequency mapping (computed once per channel/mode)
             f_ghz = utils.generate_frequencies(channel, mode)
 
-            emissivities = {
-                "ical": fits_data[1].data["RICAL"][0]
-                + 1j * fits_data[1].data["IICAL"][0],
-                "dihedral": fits_data[1].data["RDIHEDRA"][0]
-                + 1j * fits_data[1].data["IDIHEDRA"][0],
-                "refhorn": fits_data[1].data["RREFHORN"][0]
-                + 1j * fits_data[1].data["IREFHORN"][0],
-                "skyhorn": fits_data[1].data["RSKYHORN"][0]
-                + 1j * fits_data[1].data["ISKYHORN"][0],
-                "collimator": fits_data[1].data["RSTRUCTU"][0]
-                + 1j * fits_data[1].data["ISTRUCTU"][0],
-                "bolometer": fits_data[1].data["RBOLOMET"][0]
-                + 1j * fits_data[1].data["IBOLOMET"][0],
+            emissivities = {"ical": fits_data[1].data["RICAL"][0] +
+                            1j * fits_data[1].data["IICAL"][0],
+                            "dihedral": fits_data[1].data["RDIHEDRA"][0] +
+                            1j * fits_data[1].data["IDIHEDRA"][0],
+                            "refhorn": fits_data[1].data["RREFHORN"][0] +
+                            1j * fits_data[1].data["IREFHORN"][0],
+                            "skyhorn": fits_data[1].data["RSKYHORN"][0] +
+                            1j * fits_data[1].data["ISKYHORN"][0],
+                            "collimator": fits_data[1].data["RSTRUCTU"][0] + 
+                            1j * fits_data[1].data["ISTRUCTU"][0],
+                            "mirror": fits_data[1].data["RSTRUCTU"][0] +
+                            1j * fits_data[1].data["ISTRUCTU"][0],
+                            "bolometer": fits_data[1].data["RBOLOMET"][0]
+                            + 1j * fits_data[1].data["IBOLOMET"][0],
             }
             for key in emissivities:
                 emissivities[key] = emissivities[key][np.abs(emissivities[key]) > 0]
@@ -116,6 +117,7 @@ for channel, channel_value in g.CHANNELS.items():
             refhorn_emiss = emissivities["refhorn"]
             skyhorn_emiss = emissivities["skyhorn"]
             collimator_emiss = emissivities["collimator"]
+            mirror_emiss = emissivities["mirror"]
             bolometer_emiss = emissivities["bolometer"]
 
             # Compute all blackbody spectra at once (vectorized)
@@ -124,6 +126,7 @@ for channel, channel_value in g.CHANNELS.items():
             bb_refhorn = utils.planck(f_ghz, mode_data[f"refhorn_{channel}"])
             bb_skyhorn = utils.planck(f_ghz, mode_data[f"skyhorn_{channel}"])
             bb_collimator = utils.planck(f_ghz, mode_data[f"collimator_{channel}"])
+            bb_mirror = utils.planck(f_ghz, mode_data[f"mirror_{channel}"])
             bb_bolometer = utils.planck(f_ghz, mode_data[f"bolometer_{channel}"])
             # bb_bolometer_rl = utils.planck(f_ghz, sky_data["bolometer_rl"])
             # bb_bolometer_lh = utils.planck(f_ghz, sky_data["bolometer_lh"])
@@ -138,7 +141,8 @@ for channel, channel_value in g.CHANNELS.items():
             term3 = bb_refhorn * refhorn_emiss
             term4 = bb_skyhorn * skyhorn_emiss
             term5 = bb_collimator * collimator_emiss
-            term6 = bb_bolometer * bolometer_emiss
+            term6 = bb_mirror * mirror_emiss
+            term7 = bb_bolometer * bolometer_emiss
 
             total_emission = (
                 term1
@@ -146,7 +150,8 @@ for channel, channel_value in g.CHANNELS.items():
                 + term3
                 + term4
                 + term5
-                + term6  # TODO: keep just the one that is being used to measure?
+                + term6
+                + term7  # TODO: keep just the one that is being used to measure?
                 # + (bb_bolometer_rl * bolometer_emiss)
                 # + (bb_bolometer_lh * bolometer_emiss)
                 # + (bb_bolometer_ll * bolometer_emiss)

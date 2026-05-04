@@ -15,3 +15,5 @@ python -m pipeline.plot_map
 python -m pipeline.firas_curve
 ```
 where the second to last line plots the produced maps and the last line computes the BB curve.
+
+To make the gif of the maps over frequencies, run `animations.sh` from the visualizations module.
