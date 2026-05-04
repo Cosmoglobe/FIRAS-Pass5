@@ -29,7 +29,9 @@ with open(f"data/plateau_divides.txt", "r") as f:
     lines = f.readlines()
     for line in lines:
         parts = line.strip().split(" ")
-        if len(parts) >= 2:
+        if parts[0] == "#":
+            continue
+        elif len(parts) >= 2:
             name = parts[0]
             plateau_divides_cache[name] = np.array(parts[1].split(",")).astype(float)
 
@@ -221,7 +223,7 @@ for channel, channel_i in g.CHANNELS.items():
             for i, mask in enumerate(plateau_masks):
                 output = stats.fit_gaussian(temps[f"{side}_hi_{element}_{channel}"][mask],
                                             temps[f"{side}_lo_{element}_{channel}"][mask], channel,
-                                            element, side, sigma=1, plateau=i+1)
+                                            element, side, plateau=i+1)
 
                 mu[keyword][i] = output[0]
                 mu_err[keyword][i] = output[1]
