@@ -375,6 +375,36 @@ def selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side):
 
     return odr_result_oneoverT2.beta
     
+def moving_average(a, n=3):
+    ret = np.cumsum(a, dtype=float)
+    ret[n:] = ret[n:] - ret[:-n]
+    return ret[n - 1:] / n
+
+def estimate_noise(lo, hi, low_temps, high_temps, element):
+    n = 200
+    lo_avg = moving_average(lo, n=n)
+
+    xsize = 1000 if element == "xcal_cone" else 10000
+
+    x = np.arange(len(hi))
+    x_avg = np.arange(n//2, len(hi)-n//2)
+
+    for i in range(0, len(lo), xsize):
+        if i + xsize > len(lo):
+            break
+        fig_noise, ax_noise = plt.subplots(figsize=(12, 6))
+        ax_noise.plot(x[i:i+xsize], lo[i:i+xsize], label='Low Current')
+        ax_noise.plot(x[i:i+xsize], hi[i:i+xsize], label='High Current')
+        ax_noise.plot(x_avg[i:i+xsize], lo_avg[i:i+xsize], label='Moving Average')
+
+        ax_noise.set_xlabel("Record Index")
+        ax_noise.set_ylabel("Low Current Temperature (K)")
+        ax_noise.set_title("Low Current Temperature and Moving Average")
+        ax_noise.legend()
+        fig_noise.savefig(f"data/output/estimate_noise/01_moving_average/{element}/{i}.png")
+        plt.close(fig_noise)
+    
+
 def debiase_hi(beta, hi, lo, low_temps, high_temps, element, side, channel):
     """
     Debiase the high temperature using the fitted Gaussian parameters.

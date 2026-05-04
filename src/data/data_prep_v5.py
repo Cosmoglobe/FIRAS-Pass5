@@ -256,6 +256,11 @@ for channel, channel_i in g.CHANNELS.items():
                                                    high_temps[f"{side}_{element}_{channel}"],
                                                    element, side, channel)
 
+            stats.estimate_noise(temps[f"{side}_lo_{element}_{channel}"],
+                                 temps[f"{side}_{element}_{channel}"], low_temps, high_temps,
+                                 element)
+            quit()
+
         all_data[f"{element}_{channel}"] = (temps[f"a_{element}_{channel}"] +
                                             temps[f"b_{element}_{channel}"]) / 2.0
 
