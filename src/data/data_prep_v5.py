@@ -6,7 +6,6 @@ import time
 
 import astropy.units as u
 import h5py
-import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -72,12 +71,15 @@ mu_err = {}
 avg_temp = {}
 temp_err = {}
 temps = {}
+low_temps = {}
 elements = ["ical", "xcal_cone", "refhorn", "skyhorn"]
 sides = ["a", "b"]
 
 cal_mask = {}
 sky_mask = {}
 midpoint_time_s = {}
+
+low_bound = 2.25 # K
 
 for channel, channel_i in g.CHANNELS.items():
     science_data = fdq_sdf[f"fdq_sdf_{channel}"]
@@ -199,7 +201,7 @@ for channel, channel_i in g.CHANNELS.items():
     midpoint_time_s[channel] = midpoint_time_s[channel][sorted_indices]
     xcal_pos = xcal_pos[sorted_indices]
     
-    # Batch interpolatetemperatures for all elements and sides
+    # Batch interpolate temperatures for all elements and sides
     print("Batch interpolating temperatures...")
     
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -217,6 +219,8 @@ for channel, channel_i in g.CHANNELS.items():
                 temps[f"{side}_hi_{element}_{channel}"] = temps[f"{side}_hi_{element}_{channel}"][cal_mask[channel]]
                 temps[f"{side}_lo_{element}_{channel}"] = temps[f"{side}_lo_{element}_{channel}"][cal_mask[channel]]
 
+            low_temps[f"{side}_{element}_{channel}"] = temps[f"{side}_lo_{element}_{channel}"] <= low_bound
+
             print(f"Dividing {side.upper()} side ICAL temperatures into plateaus to try to de-bias them")
             plateau_masks = stats.divide_plateaus(temps[f"{side}_lo_{element}_{channel}"],
                                                     channel, element, side, plateau_divides_cache)
@@ -230,9 +234,9 @@ for channel, channel_i in g.CHANNELS.items():
 
             # Fit gaussians for each plateau
             for i, mask in enumerate(plateau_masks):
-                output = stats.fit_gaussian(temps[f"{side}_hi_{element}_{channel}"][mask],
-                                            temps[f"{side}_lo_{element}_{channel}"][mask], channel,
-                                            element, side, plateau=i+1)
+                output = stats.fit_gaussian(temps[f"{side}_hi_{element}_{channel}"][mask & ~low_temps[f"{side}_{element}_{channel}"]],
+                                            temps[f"{side}_lo_{element}_{channel}"][mask & ~low_temps[f"{side}_{element}_{channel}"]],
+                                            channel, element, side, plateau=i+1)
 
                 mu[keyword][i] = output[0]
                 mu_err[keyword][i] = output[1]
@@ -261,8 +265,9 @@ for channel, channel_i in g.CHANNELS.items():
         for side in sides:
             temps[f"{side}_{element}_{channel}"] = stats.debiase_hi(beta[f"{element}_{side}"],
                                                    temps[f"{side}_hi_{element}_{channel}"],
-                                                   temps[f"{side}_lo_{element}_{channel}"], element,
-                                                   side, channel)
+                                                   temps[f"{side}_lo_{element}_{channel}"],
+                                                   low_temps[f"{side}_{element}_{channel}"],
+                                                   element, side, channel)
 
         all_data[f"{element}_{channel}"] = (temps[f"a_{element}_{channel}"] +
                                             temps[f"b_{element}_{channel}"]) / 2.0

@@ -418,14 +418,27 @@ def selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side):
 
     return odr_result_electronics.beta
     
-def debiase_hi(beta, hi, lo, element, side, channel):
-    """Debiase the high temperature using the fitted Gaussian parameters."""
+def debiase_hi(beta, hi, lo, low_temps, element, side, channel):
+    """
+    Debiase the high temperature using the fitted Gaussian parameters.
+    
+    Parameters:
+    - beta: Parameters of the electronics model fitted to the self-heating vs temperature data.
+    - hi: Original high current temperatures.
+    - lo: Original low current temperatures.
+    - low_temps: Boolean array indicating which temperatures are below a threashold and only the
+    low current should be used for them.
+    - element: The element being analyzed (e.g., "ical", "xcal_cone", etc.).
+    - side: The side being analyzed ("a" or "b").
+    - channel: The channel being analyzed ("short", "medium", or "long").
+    """
 
     if g.VERBOSE > 1:
         print("Starting debiase_hi ---------------------------------------------------------------")
     
     # Vectorized debiasing - no copying needed
-    debiased_hi = hi - electronics_model(beta, hi)
+    debiased_hi = np.copy(lo)
+    debiased_hi[~low_temps] = hi[~low_temps] - electronics_model(beta, hi[~low_temps])
 
     xsize = 1000 if element == "xcal_cone" else 10000
 
@@ -464,5 +477,4 @@ def debiase_hi(beta, hi, lo, element, side, channel):
             plt.close(fig_debias)
         print("Plotted check 1 -------------------------------------------------------------------")
 
-    return debiased_hi
     return debiased_hi

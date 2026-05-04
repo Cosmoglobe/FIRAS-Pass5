@@ -7,7 +7,7 @@ This is the directory for development of the low-level re-analysis of FIRAS data
 
 Products of the current analysis can be found here.
 
-To run the full analysis, run the following, inside the `src` directory:
+To run the full analysis, run the `run_pipeline.sh` script or, alternatively, run the following, inside the `src` directory:
 ```
 python -m data.data_prep_v5
 python -m pipeline.main
