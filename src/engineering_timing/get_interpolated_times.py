@@ -144,15 +144,11 @@ def get_data():
     offset_ind = np.arange(16)
 
     ifg_time_offset = 36 * u.s
+    all_nan = []
     for side in ["a", "b"]:
         for i, grt in enumerate(grt_names):
             if (grt == "xcal_tip" or grt == "collimator") and side == "b":
                 continue
-            not_ok = grts[f"{side}_lo_{grt}"] == -9999
-            grts[f"{side}_lo_{grt}"][not_ok] = np.nan
-            not_ok = grts[f"{side}_hi_{grt}"] == -9999
-            grts[f"{side}_hi_{grt}"][not_ok] = np.nan
-
             not_ok = grts[f"{side}_lo_{grt}"] == -9999
             grts[f"{side}_lo_{grt}"][not_ok] = np.nan
             not_ok = grts[f"{side}_hi_{grt}"] == -9999
@@ -171,6 +167,37 @@ def get_data():
 
             grt_times[f"{side}_lo_{grt}"] += offset_ind[i] * u.s
             grt_times[f"{side}_hi_{grt}"] += offset_ind[i] * u.s
+
+            # remove grts with nans
+            # how many nans?
+            # print(f"DEBUG: {side}_{grt} has {np.isnan(grts[f'{side}_lo_{grt}']).sum()} nans in lo "
+            #       f"and {np.isnan(grts[f'{side}_hi_{grt}']).sum()} nans in hi out of "
+            #       f"{len(grts[f'{side}_lo_{grt}'])} total points")
+            grt_times[f"{side}_lo_{grt}"] = grt_times[f"{side}_lo_{grt}"][
+                ~np.isnan(grts[f"{side}_lo_{grt}"])
+]
+            grt_times[f"{side}_hi_{grt}"] = grt_times[f"{side}_hi_{grt}"][
+                ~np.isnan(grts[f"{side}_hi_{grt}"])
+            ]
+
+            grts[f"{side}_lo_{grt}"] = grts[f"{side}_lo_{grt}"][
+                ~np.isnan(grts[f"{side}_lo_{grt}"])
+            ]
+            grts[f"{side}_hi_{grt}"] = grts[f"{side}_hi_{grt}"][
+                ~np.isnan(grts[f"{side}_hi_{grt}"])
+            ]
+
+            # remove grts and corresponding times where everything is nan
+            if np.all(np.isnan(grts[f"{side}_lo_{grt}"])):
+                print(f"Warning: All values are NaN for {side}_lo_{grt}. This grt will be ignored.")
+                all_nan.append(f"{side}_lo_{grt}")
+                del grts[f"{side}_lo_{grt}"]
+                del grt_times[f"{side}_lo_{grt}"]
+            if np.all(np.isnan(grts[f"{side}_hi_{grt}"])):
+                print(f"Warning: All values are NaN for {side}_hi_{grt}. This grt will be ignored.")
+                all_nan.append(f"{side}_hi_{grt}")
+                del grts[f"{side}_hi_{grt}"]
+                del grt_times[f"{side}_hi_{grt}"]
 
     return grts, grt_times
 

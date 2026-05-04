@@ -195,7 +195,8 @@ def divide_plateaus(lo, channel, element, side, plateau_divides_cache=None, n_co
     if n_cores is None:
         n_cores = max(1, os.cpu_count() - 2)  # Leave 2 cores free
 
-    print(f"Minimum and maximum low current {channel} ({side.upper()} side) for {element}: {lo.min():.3f}, {lo.max():.3f}")
+    print(f"Minimum and maximum low current {channel} ({side.upper()} side) for {element}: "
+          f"{np.nanmin(lo):.3f}, {np.nanmax(lo):.3f}")
 
     # Use cached plateau divides if available, otherwise read from file
     if plateau_divides_cache is not None and f"{element}_{side}" in plateau_divides_cache:
@@ -248,7 +249,7 @@ def divide_plateaus(lo, channel, element, side, plateau_divides_cache=None, n_co
     return plateau_masks
 
 
-def fit_gaussian(hi, lo, channel, element, side, sigma=3, plateau=0):
+def fit_gaussian(hi, lo, channel, element, side, plateau=0):
     """Fit a Gaussian to the difference between hi and lo temperatures."""
     if g.VERBOSE > 1:
         print("Starting fit_gaussian -------------------------------------------------------------")
@@ -285,8 +286,6 @@ def fit_gaussian(hi, lo, channel, element, side, sigma=3, plateau=0):
         p = norm.pdf(x, mu, std)
         ax_gauss.plot(x, p, ls='dashed', label=f'Gaussian for Plateau {plateau}')
         print(f"Fitted gaussian for plateau {plateau} for {element} {side} {channel}: mu={mu:.04f}, std={std:.04f}")
-        explained = len(diff[(diff > mu - sigma*std) & (diff < mu + sigma*std)]) / len(diff)
-        print(f"Explained fraction by the gaussian at {sigma} std: {explained*100:.02f}%")
 
         ax_gauss.legend()
         fig_gauss.savefig(f"data/output/fit_gaussian/01_hilo_temp_difference/{channel}/{element}/{side}_plateau_{plateau}.png")

@@ -16,6 +16,10 @@ from healpy.rotator import Rotator
 import globals as g
 import utils.my_utils as utils
 
+import time
+
+t1 = time.time()
+
 if g.COORDINATES == "G":
     folder = "galactic"
 
@@ -314,3 +318,6 @@ if g.JOINT:
                 m_joint[:, (freq - len(f_ghz["ll_ss"]))],
                 overwrite=True,
             )
+
+t2 = time.time()
+print(f"Time taken to plot maps: {t2 - t1:.2f} seconds")
