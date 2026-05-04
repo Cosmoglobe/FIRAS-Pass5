@@ -293,43 +293,6 @@ def fit_gaussian(hi, lo, channel, element, side, plateau=0):
         print("Plotted check 1 -------------------------------------------------------------------")
     return mu, mu_err, avg_temp, temp_err
 
-# def negative_exponential(beta, x):
-#     A = beta[0]
-#     lamb = beta[1]
-#     return A * np.exp(lamb * x)
-
-# def linear_model(beta, x):
-#     m = beta[0]
-#     b = beta[1]
-#     return m * x + b
-
-# def power_law(beta, x):
-#     A = beta[0]
-#     alpha = beta[1]
-#     return A * x**(alpha)
-
-# def double_power_law(beta, x):
-#     A1 = beta[0]
-#     alpha1 = beta[1]
-#     A2 = beta[2]
-#     alpha2 = beta[3]
-#     return A1 * x**(alpha1) + A2 * x**(alpha2)
-
-# def electronics_model(beta, x):
-#     level = beta[0]
-#     T_knee1 = beta[1]
-#     A1 = beta[2]
-
-#     return level + A1 * (T_knee1 / x) ** 2
-
-# def electronics_model2(beta, x):
-#     level = beta[0]
-#     T_knee = beta[1]
-#     A1 = beta[2]
-#     m = beta[3]
-
-#     return level + A1 * (T_knee / x) ** 2 + m * x
-
 def oneoverT2(beta, x):
     level = beta[0]
     T_knee = beta[1]
@@ -377,25 +340,40 @@ def selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side):
     
 def moving_average(a, n=3):
     ret = np.cumsum(a, dtype=float)
-    ret[n:] = ret[n:] - ret[:-n]
-    return ret[n - 1:] / n
+    ret[:n] = ret[:n] / np.arange(1, n + 1)  # Handle the first n-1 elements
+    ret[n:] = (ret[n:] - ret[:-n]) / n
+    return ret
 
 def estimate_noise(lo, hi, low_temps, high_temps, element):
     n = 200
     lo_avg = moving_average(lo, n=n)
+    print(f"lo_avg shape: {lo_avg.shape}, lo shape: {lo.shape}")
 
     xsize = 1000 if element == "xcal_cone" else 10000
 
     x = np.arange(len(hi))
-    x_avg = np.arange(n//2, len(hi)-n//2)
+
+    cutoff = 0.01
+    slope = (lo_avg[1:] - lo_avg[:-1])
+    slope = np.append(slope, slope[-1])  # Append 0 to keep the same length as lo_avg
+    example = 35000
+    print(slope[example])
+
+    plateaus = slope <= cutoff
+    print(f"shape of plateaus: {plateaus.shape}, shape of lo_avg: {lo_avg.shape}")
 
     for i in range(0, len(lo), xsize):
         if i + xsize > len(lo):
             break
         fig_noise, ax_noise = plt.subplots(figsize=(12, 6))
         ax_noise.plot(x[i:i+xsize], lo[i:i+xsize], label='Low Current')
-        ax_noise.plot(x[i:i+xsize], hi[i:i+xsize], label='High Current')
-        ax_noise.plot(x_avg[i:i+xsize], lo_avg[i:i+xsize], label='Moving Average')
+        ax_noise.plot(x[i:i+xsize], lo_avg[i:i+xsize], label='Moving Average')
+        ax_noise.plot(x[plateaus][i:i+xsize], lo[plateaus][i:i+xsize], label='Low Current Plateaus',
+                      ls='None', marker='.', ms=4)
+        # ax_noise.plot(x[i:i+xsize], hi[i:i+xsize], label='High Current')
+        
+        if i < example < i + xsize:
+            ax_noise.axvline(x=example, color='red', ls='dashed')
 
         ax_noise.set_xlabel("Record Index")
         ax_noise.set_ylabel("Low Current Temperature (K)")
@@ -468,3 +446,7 @@ def debiase_hi(beta, hi, lo, low_temps, high_temps, element, side, channel):
         print("Plotted check 1 -------------------------------------------------------------------")
 
     return debiased_hi
+
+if __name__ == "__main__":
+    array = [1, 2, 3, 4, 5]
+    print(moving_average(array, n=3))
