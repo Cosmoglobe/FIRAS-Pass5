@@ -72,6 +72,7 @@ avg_temp = {}
 temp_err = {}
 temps = {}
 low_temps = {}
+high_temps = {}
 elements = ["ical", "xcal_cone", "refhorn", "skyhorn"]
 sides = ["a", "b"]
 
@@ -80,6 +81,7 @@ sky_mask = {}
 midpoint_time_s = {}
 
 low_bound = 2.25 # K
+high_bound = 4 # K
 
 for channel, channel_i in g.CHANNELS.items():
     science_data = fdq_sdf[f"fdq_sdf_{channel}"]
@@ -128,20 +130,12 @@ for channel, channel_i in g.CHANNELS.items():
             if key.endswith(f"_{channel}"):
                 all_data[key] = all_data[key][1:]
 
-    # DEBUG
-    plt.close("all")
-    plt.plot(all_data[f"midpoint_time_s_{channel}"])
-    plt.savefig(f"data/output/midpoint_time/{channel}", dpi=150)
-    plt.close()
-    print(f"Midpoint time range for channel {channel.upper()}: {all_data[f'midpoint_time_s_{channel}'].min()} to {all_data[f'midpoint_time_s_{channel}'].max()}")
-    print(f"Number of zeros: {(all_data[f'midpoint_time_s_{channel}'] == 0).sum()}")
-    print(f"First, second, third values: {all_data[f'midpoint_time_s_{channel}'][:3]}")
+    stats.table3_4(all_data[f"xcal_pos_{channel}"], all_data[f"mtm_length_{channel}"],
+                   all_data[f"mtm_speed_{channel}"])
 
-    stats.table3_4(all_data[f"xcal_pos_{channel}"], all_data[f"mtm_length_{channel}"], all_data[f"mtm_speed_{channel}"])
-
-    fpp_fail, fakeit, xcal_transit = stats.table4_1(
-        all_data[f"data_quality_{channel}"], all_data[f"fake_{channel}"], all_data[f"xcal_pos_{channel}"]
-    )
+    fpp_fail, fakeit, xcal_transit = stats.table4_1(all_data[f"data_quality_{channel}"],
+                                                    all_data[f"fake_{channel}"],
+                                                    all_data[f"xcal_pos_{channel}"])
 
     for key in all_data:
         if key.endswith(f"_{channel}"):
@@ -157,22 +151,12 @@ for channel, channel_i in g.CHANNELS.items():
             cal_data[key] = all_data[key][cal_mask[channel]]
             sky_data[key] = all_data[key][sky_mask[channel]]
 
-    (
-        cal_saturated,
-        cal_sw,
-        cal_glitch_rate,
-        sky_saturated,
-        sky_sw,
-        sky_glitch_rate,
-        limb,
-        no_solution,
-    ) = stats.table4_2(
-        cal_data[f"saturated_{channel}"],
-        cal_data[f"data_quality_{channel}"],
-        sky_data[f"saturated_{channel}"],
-        sky_data[f"data_quality_{channel}"],
-        sky_data[f"solution_{channel}"],
-    )
+    (cal_saturated, cal_sw, cal_glitch_rate, sky_saturated, sky_sw, sky_glitch_rate, limb,
+     no_solution) = stats.table4_2(cal_data[f"saturated_{channel}"], 
+                                   cal_data[f"data_quality_{channel}"],
+                                   sky_data[f"saturated_{channel}"],
+                                   sky_data[f"data_quality_{channel}"],
+                                   sky_data[f"solution_{channel}"])
 
     # Combine cuts before applying
     cal_cuts = ~(cal_saturated | cal_sw | cal_glitch_rate)
@@ -220,6 +204,7 @@ for channel, channel_i in g.CHANNELS.items():
                 temps[f"{side}_lo_{element}_{channel}"] = temps[f"{side}_lo_{element}_{channel}"][cal_mask[channel]]
 
             low_temps[f"{side}_{element}_{channel}"] = temps[f"{side}_lo_{element}_{channel}"] <= low_bound
+            high_temps[f"{side}_{element}_{channel}"] = temps[f"{side}_hi_{element}_{channel}"] >= high_bound
 
             print(f"Dividing {side.upper()} side ICAL temperatures into plateaus to try to de-bias them")
             plateau_masks = stats.divide_plateaus(temps[f"{side}_lo_{element}_{channel}"],
@@ -234,8 +219,8 @@ for channel, channel_i in g.CHANNELS.items():
 
             # Fit gaussians for each plateau
             for i, mask in enumerate(plateau_masks):
-                output = stats.fit_gaussian(temps[f"{side}_hi_{element}_{channel}"][mask & ~low_temps[f"{side}_{element}_{channel}"]],
-                                            temps[f"{side}_lo_{element}_{channel}"][mask & ~low_temps[f"{side}_{element}_{channel}"]],
+                output = stats.fit_gaussian(temps[f"{side}_hi_{element}_{channel}"][mask & ~low_temps[f"{side}_{element}_{channel}"] & ~high_temps[f"{side}_{element}_{channel}"]],
+                                            temps[f"{side}_lo_{element}_{channel}"][mask & ~low_temps[f"{side}_{element}_{channel}"] & ~high_temps[f"{side}_{element}_{channel}"]],
                                             channel, element, side, plateau=i+1)
 
                 mu[keyword][i] = output[0]
@@ -257,7 +242,8 @@ for element in elements:
         mu_err_all = np.concatenate([mu_err[f"{side}_{element}_{channel}"] for channel in g.CHANNELS])
         avg_temp_all = np.concatenate([avg_temp[f"{side}_{element}_{channel}"] for channel in g.CHANNELS])
         temp_err_all = np.concatenate([temp_err[f"{side}_{element}_{channel}"] for channel in g.CHANNELS])
-        beta[f"{element}_{side}"] = stats.selfheat_vs_temp(mu_all, mu_err_all, avg_temp_all, temp_err_all, element, side)
+        beta[f"{element}_{side}"] = stats.selfheat_vs_temp(mu_all, mu_err_all, avg_temp_all,
+                                                           temp_err_all, element, side)
         # print(f"Fitted self-heating for {element} {side.upper()}: beta={beta:.6f}")
 
 for channel, channel_i in g.CHANNELS.items():
@@ -267,6 +253,7 @@ for channel, channel_i in g.CHANNELS.items():
                                                    temps[f"{side}_hi_{element}_{channel}"],
                                                    temps[f"{side}_lo_{element}_{channel}"],
                                                    low_temps[f"{side}_{element}_{channel}"],
+                                                   high_temps[f"{side}_{element}_{channel}"],
                                                    element, side, channel)
 
         all_data[f"{element}_{channel}"] = (temps[f"a_{element}_{channel}"] +

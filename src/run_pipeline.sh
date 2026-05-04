@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+
 python -m data.data_prep_v5
 python -m pipeline.main
 python -m pipeline.plot_map

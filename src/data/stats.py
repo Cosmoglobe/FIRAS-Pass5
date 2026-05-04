@@ -293,51 +293,48 @@ def fit_gaussian(hi, lo, channel, element, side, plateau=0):
         print("Plotted check 1 -------------------------------------------------------------------")
     return mu, mu_err, avg_temp, temp_err
 
-def negative_exponential(beta, x):
-    A = beta[0]
-    lamb = beta[1]
-    return A * np.exp(lamb * x)
+# def negative_exponential(beta, x):
+#     A = beta[0]
+#     lamb = beta[1]
+#     return A * np.exp(lamb * x)
 
-def linear_model(beta, x):
-    m = beta[0]
-    b = beta[1]
-    return m * x + b
+# def linear_model(beta, x):
+#     m = beta[0]
+#     b = beta[1]
+#     return m * x + b
 
-def power_law(beta, x):
-    A = beta[0]
-    alpha = beta[1]
-    return A * x**(alpha)
+# def power_law(beta, x):
+#     A = beta[0]
+#     alpha = beta[1]
+#     return A * x**(alpha)
 
-def double_power_law(beta, x):
-    A1 = beta[0]
-    alpha1 = beta[1]
-    A2 = beta[2]
-    alpha2 = beta[3]
-    return A1 * x**(alpha1) + A2 * x**(alpha2)
+# def double_power_law(beta, x):
+#     A1 = beta[0]
+#     alpha1 = beta[1]
+#     A2 = beta[2]
+#     alpha2 = beta[3]
+#     return A1 * x**(alpha1) + A2 * x**(alpha2)
 
-def electronics_model(beta, x):
-    level = beta[0]
-    T_knee1 = beta[1]
-    T_knee2 = beta[2]
-    alpha = beta[3]
-    A1 = beta[4]
-    A2 = beta[5]
+# def electronics_model(beta, x):
+#     level = beta[0]
+#     T_knee1 = beta[1]
+#     A1 = beta[2]
 
-    # return level + (T_knee1 / x) ** 2 + (x / T_knee2) ** alpha
-    return level + A1 * (T_knee1 / x) ** 2 + A2 * (x / T_knee2) ** alpha
+#     return level + A1 * (T_knee1 / x) ** 2
 
-def electronics_model2(beta, x):
-    level = beta[0]
-    T_knee = beta[1]
-    A1 = beta[2]
-    m = beta[3]
+# def electronics_model2(beta, x):
+#     level = beta[0]
+#     T_knee = beta[1]
+#     A1 = beta[2]
+#     m = beta[3]
 
-    return level + A1 * (T_knee / x) ** 2 + m * x
+#     return level + A1 * (T_knee / x) ** 2 + m * x
 
 def oneoverT2(beta, x):
     level = beta[0]
     T_knee = beta[1]
-    return level + (T_knee / x) ** 2
+    A = beta[2]
+    return level + A * (T_knee / x) ** 2
 
 def selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side):
     print(f"Number of points being fit: {len(mu)}")
@@ -358,42 +355,8 @@ def selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side):
     sy = np.abs(mu_err)  # Uncertainty in y (sigma_y)
     data = odr.Data(avg_temp, mu, wd=1/sx**2, we=1/sy**2)  # wd: x weights, we: y weights
 
-    model = odr.Model(negative_exponential)
-    # Initialize ODR with model, data, and initial parameter guess
-    odr_obj = odr.ODR(data, model, beta0=[1.0, -1.0])
-    # Run the fit
-    odr_result_exp = odr_obj.run()
-    print(f"Residual variance for negative exponential: {odr_result_exp.res_var:.3f}")
-
-    model = odr.Model(linear_model)
-    odr_obj = odr.ODR(data, model, beta0=[0.0, 0.0])
-    odr_result_linear = odr_obj.run()
-    print(f"Residual variance for linear model: {odr_result_linear.res_var:.3f}")
-
-    model = odr.Model(power_law)
-    odr_obj = odr.ODR(data, model, beta0=[1.0, -1.0])
-    odr_result_power = odr_obj.run()
-    print(f"Residual variance for power law: {odr_result_power.res_var:.3f}")
-
-    model = odr.Model(double_power_law)
-    odr_obj = odr.ODR(data, model, beta0=[1.0, 1.0, 1.0, -1.0])
-    odr_result_double_power = odr_obj.run()
-    print(f"Residual variance for double power law: {odr_result_double_power.res_var:.3f}")
-
-    model = odr.Model(electronics_model)
-    odr_obj = odr.ODR(data, model, beta0=[0, 4, 6, 0, 1, 1])
-    # odr_obj = odr.ODR(data, model, beta0=[1, 4, 6, 0])
-    odr_result_electronics = odr_obj.run()
-    print(f"Residual variance for electronics model: {odr_result_electronics.res_var:.3f}")
-
-    model = odr.Model(electronics_model2)
-    odr_obj = odr.ODR(data, model, beta0=[0, 4, 1, 6])
-    # odr_obj = odr.ODR(data, model, beta0=[1, 4, 6, 0])
-    odr_result_electronics2 = odr_obj.run()
-    print(f"Residual variance for electronics model2: {odr_result_electronics2.res_var:.3f}")
-
     model = odr.Model(oneoverT2)
-    odr_obj = odr.ODR(data, model, beta0=[0, 3])
+    odr_obj = odr.ODR(data, model, beta0=[0, 3, 1])
     odr_result_oneoverT2 = odr_obj.run()
     print(f"Residual variance for 1/T^2 model: {odr_result_oneoverT2.res_var:.3f}")
 
@@ -401,12 +364,6 @@ def selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side):
         plt.figure()  # Create a new figure for the fit plots
         plt.errorbar(avg_temp, mu, yerr=mu_err, xerr=temp_err, fmt='o', label='Data')
         x = np.linspace(avg_temp.min() - 0.5, avg_temp.max() + 0.5, 100)
-        plt.plot(x, negative_exponential(odr_result_exp.beta, x), label="Negative exponential")
-        plt.plot(x, linear_model(odr_result_linear.beta, x), label="Linear")
-        plt.plot(x, power_law(odr_result_power.beta, x), label="Power law")
-        plt.plot(x, double_power_law(odr_result_double_power.beta, x), label="Double power law")
-        plt.plot(x, electronics_model(odr_result_electronics.beta, x), label="Electronics model")
-        plt.plot(x, electronics_model2(odr_result_electronics2.beta, x), label="Electronics model2")
         plt.plot(x, oneoverT2(odr_result_oneoverT2.beta, x), label="1/T^2 model")
         plt.xlabel("Average High Current Temperature (K)")
         plt.ylabel("Fitted Gaussian Mean of High-Low Difference (K)")
@@ -416,9 +373,9 @@ def selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side):
         plt.close()
         print("Plotted check 1 -------------------------------------------------------------------")
 
-    return odr_result_electronics.beta
+    return odr_result_oneoverT2.beta
     
-def debiase_hi(beta, hi, lo, low_temps, element, side, channel):
+def debiase_hi(beta, hi, lo, low_temps, high_temps, element, side, channel):
     """
     Debiase the high temperature using the fitted Gaussian parameters.
     
@@ -428,6 +385,8 @@ def debiase_hi(beta, hi, lo, low_temps, element, side, channel):
     - lo: Original low current temperatures.
     - low_temps: Boolean array indicating which temperatures are below a threashold and only the
     low current should be used for them.
+    - high_temps: Boolean array indicating which temperatures are above a threshold and only the
+    high current should be used for them.
     - element: The element being analyzed (e.g., "ical", "xcal_cone", etc.).
     - side: The side being analyzed ("a" or "b").
     - channel: The channel being analyzed ("short", "medium", or "long").
@@ -438,7 +397,8 @@ def debiase_hi(beta, hi, lo, low_temps, element, side, channel):
     
     # Vectorized debiasing - no copying needed
     debiased_hi = np.copy(lo)
-    debiased_hi[~low_temps] = hi[~low_temps] - electronics_model(beta, hi[~low_temps])
+    debiased_hi[~low_temps & ~high_temps] = (hi[~low_temps & ~high_temps] -
+                                             oneoverT2(beta, hi[~low_temps & ~high_temps]))
 
     xsize = 1000 if element == "xcal_cone" else 10000
 
