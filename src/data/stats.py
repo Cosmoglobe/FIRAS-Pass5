@@ -341,9 +341,9 @@ def selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side):
 def moving_average(a, n=3):
     result = np.convolve(a, np.ones(n)/n, mode='same')
     for i in range(0, n):
-        result[i] = a[i]
+        result[i] = np.average(a[0:i*2+1])
     for i in range(len(a)-n+1, len(a)):
-        result[i] = a[i]
+        result[i] = np.average(a[i*2:])
     return result
 
 def moving_std(a, n=3):
@@ -351,117 +351,62 @@ def moving_std(a, n=3):
     for i in range(n, len(a)-n+1):
         start = max(0, i - n//2)
         end = min(len(a), i + n//2 + 1)
-        result[i] = np.std(a[start:end], ddof=1)  # Use ddof=1 for sample std
+        result[i] = np.std(a[start:end])
     for i in range(0, n):
-        result[i] = np.std(a[0:i+1], ddof=1)
+        result[i] = np.std(a[0:i*2+1])
     for i in range(len(a)-n+1, len(a)):
-        result[i] = np.std(a[i:], ddof=1)
+        result[i] = np.std(a[i*2:])
     return result
 
-def estimate_noise(temps, element):
+def estimate_noise(lo, hi, element):
     n = 15
-    temp_avg = moving_average(temps, n=n)
-    temp_std = moving_std(temps, n=n)
-    print(f"temp_avg shape: {temp_avg.shape}, temps shape: {temps.shape}")
+    lo_avg = moving_average(lo, n=n)
+    lo_std = moving_std(lo, n=n)
 
-    xsize = 1000 if element == "xcal_cone" else 10000
-
-    x = np.arange(len(temps), dtype=float)
-
-    # cutoff = 0.0008
-    # slope = (temp_avg[1:] - temp_avg[:-1])
-    # slope = np.append(slope, slope[-1])  # Append 0 to keep the same length as temp_avg
-    # example = 83145
-    # print(slope[example])
-
-    # plateaus = np.abs(slope) <= cutoff
-    # print(f"Percentage of data removed from the plateau cut: {100 * np.sum(~plateaus) / len(temps):.2f}%")
-
-    # if g.VERBOSE > 2:
-        # x_plateau = np.copy(x)
-        # x_plateau[plateaus == False] = np.nan
-        # lo_plateau = np.copy(temps)
-        # lo_plateau[plateaus == False] = np.nan
-
-        # x_no_plateau = np.copy(x)
-        # x_no_plateau[plateaus] = np.nan
-    for i in range(0, len(temps), xsize):
-        if i + xsize > len(temps):
-            break
-        fig_noise, ax_noise = plt.subplots(figsize=(12, 6))
-        # ax_noise.vlines(x_no_plateau[i:i+xsize], np.min(temps[i:i+xsize]), np.max(temps[i:i+xsize]),
-        #                 color='grey')
-        ax_noise.plot(x[i:i+xsize], temps[i:i+xsize], label='Low Current')
-        ax_noise.plot(x[i:i+xsize], temp_avg[i:i+xsize], label='Moving Average')
-        ax_noise.plot(x[i:i+xsize], temp_std[i:i+xsize]+2.7, label='Moving Std Dev+2.7', ls='dashed')
-        # ax_noise.plot(x_plateau[i:i+xsize], lo_plateau[i:i+xsize], label='Low Current Plateaus',
-        #             ls='None', marker='.', ms=2)
-        # plot in vertical lines where it is identified as not plateau
-        
-        # ax_noise.plot(x[i:i+xsize], hi[i:i+xsize], label='High Current')
-        
-        # if i < example < i + xsize:
-        #     ax_noise.axvline(x=example, color='red', ls='dashed')
-
-        ax_noise.set_xlabel("Record Index")
-        ax_noise.set_ylabel("Low Current Temperature (K)")
-        ax_noise.set_title("Low Current Temperature and Moving Average")
-        ax_noise.legend()
-        fig_noise.savefig(f"data/output/estimate_noise/01_moving_average/{element}/{i}.png")
-        plt.close(fig_noise)
-
-    quit()
-
-    residual = np.copy(temps)
-    residual[plateaus] = residual[plateaus] - temp_avg[plateaus]
-    residual[~plateaus] = np.nan
-
-    # get indices of the plateau points
-    plateau_indices = np.where(~plateaus)[0]
-
-    # save the plateau indices where there is not 2 consecutive points
-    start_plateau_idx = np.array([0])
-    end_plateau_idx = np.array([])
-    first = False
-    last = True
-    for i in range(1, len(plateau_indices)):
-        if plateau_indices[i] - plateau_indices[i-1] == 1 and first:
-            start_plateau_idx = np.append(start_plateau_idx, plateau_indices[i])
-            first = True
-            last = False
-        elif plateau_indices[i] - plateau_indices[i-1] > 1 and last:
-            end_plateau_idx = np.append(end_plateau_idx, plateau_indices[i-1])
-            last = True
-            first = False
-    end_plateau_idx = np.append(end_plateau_idx, len(temps)-1)
-
-    # if g.VERBOSE > 2:
-    for i in range(0, len(residual), xsize):
-        if i + xsize > len(residual):
-                break
-        
-        curr_start_idx = start_plateau_idx[(start_plateau_idx >= i) & (start_plateau_idx < i + xsize)]
-        curr_end_idx = end_plateau_idx[(end_plateau_idx >= i) & (end_plateau_idx < i + xsize)]
-
-        fig_noise, ax_noise = plt.subplots(figsize=(12, 6))
-        ax_noise.plot(x[i:i+xsize], residual[i:i+xsize], label='Residuals')
-        ax_noise.vlines(curr_start_idx, np.nanmin(residual[i:i+xsize]),
-                        np.nanmax(residual[i:i+xsize]), color='green', label='Start Plateau Edges')
-        ax_noise.vlines(curr_end_idx, np.nanmin(residual[i:i+xsize]),
-                        np.nanmax(residual[i:i+xsize]), color='red', label='End Plateau Edges')
-        ax_noise.set_xlabel("Record Index")
-        ax_noise.set_ylabel("Residual (K)")
-        ax_noise.set_title("Residuals of Low Current Temperatures from Moving Average")
-        ax_noise.legend()
-        fig_noise.savefig(f"data/output/estimate_noise/02_residuals/{i}.png")
-        plt.close(fig_noise)
-
-    # estimate the noise for each of the plateaus separately
-
-
+    # these are gotten by eye checking all the data
+    low_cut = 0.005
+    med_cut = 0.08
+    high_cut = 0.6
     
+    jumps = []
+    for i in range(len(lo)):
+        if (lo_avg[i] < 4) and (lo_std[i] > low_cut):
+            jumps.append(i)
+        elif (lo_avg[i] >= 4) and (lo_avg[i] < 10) and (lo_std[i] > med_cut):
+            jumps.append(i)
+        elif (lo_avg[i] >= 10) and (lo_std[i] > high_cut):
+            jumps.append(i)
 
-def debiase_hi(beta, hi, lo, low_temps, high_temps, element, side, channel):
+    if g.VERBOSE > 2:
+        xsize = 1000 if element == "xcal_cone" else 10000
+        x = np.arange(len(lo), dtype=float)
+        for i in range(0, len(lo), xsize):
+            if i + xsize > len(lo):
+                break
+            fig_noise, ax_noise = plt.subplots(figsize=(12, 6))
+
+            curr_jumps = [np.array(jumps)[(np.array(jumps) >= i) & (np.array(jumps) < i + xsize)]]
+
+            ax_noise.vlines(curr_jumps, np.nanmin(lo[i:i+xsize]), np.nanmax(lo[i:i+xsize]),
+                            label='Detected Jumps', color='C4')
+            ax_noise.plot(x[i:i+xsize], lo[i:i+xsize], label='Low Current')
+            ax_noise.plot(x[i:i+xsize], hi[i:i+xsize], label='High Current')
+            ax_noise.plot(x[i:i+xsize], lo_avg[i:i+xsize], label='Moving Average')
+            ax_noise.plot(x[i:i+xsize], lo_std[i:i+xsize]+2.7, label='Moving Std Dev+2.7',
+                        ls='dashed')
+            
+            ax_noise.set_xlabel("Record Index")
+            ax_noise.set_ylabel("Low Current Temperature (K)")
+            ax_noise.set_title("Low Current Temperature and Moving Average")
+            ax_noise.legend()
+            fig_noise.savefig(f"data/output/estimate_noise/01_moving_average/{element}/{i}.png")
+            plt.close(fig_noise)
+
+    hi_std = moving_std(hi, n=n)
+
+    return jumps, lo_std, hi_std
+
+def debiase_hi(beta, hi, lo, low_temps, high_temps, jumps, lo_std, hi_std, element, side, channel):
     """
     Debiase the high temperature using the fitted Gaussian parameters.
     
@@ -485,6 +430,7 @@ def debiase_hi(beta, hi, lo, low_temps, high_temps, element, side, channel):
     debiased_hi = np.copy(lo)
     debiased_hi[~low_temps & ~high_temps] = (hi[~low_temps & ~high_temps] -
                                              oneoverT2(beta, hi[~low_temps & ~high_temps]))
+    debiased_hi[low_temps or high_temps] = np.nan
 
     xsize = 1000 if element == "xcal_cone" else 10000
 
