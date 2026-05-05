@@ -71,6 +71,7 @@ mu_err = {}
 avg_temp = {}
 temp_err = {}
 temps = {}
+std_weight = {}
 low_temps = {}
 high_temps = {}
 elements = ["ical", "xcal_cone", "refhorn", "skyhorn"]
@@ -250,17 +251,20 @@ for channel, channel_i in g.CHANNELS.items():
     for element in elements:
         for side in sides:
             jumps, lo_std, hi_std = stats.estimate_noise(temps[f"{side}_lo_{element}_{channel}"],
-                                                         temps[f"{side}_hi_{element}_{channel}"],
-                                                         element)
-            temps[f"{side}_{element}_{channel}"] = stats.debiase_hi(beta[f"{element}_{side}"],
+                                                         element,
+                                                         temps[f"{side}_hi_{element}_{channel}"])
+            temps[f"{side}_{element}_{channel}"], std_weight[f"{side}_{element}_{channel}"] = stats.debiase_hi(beta[f"{element}_{side}"],
                                                    temps[f"{side}_hi_{element}_{channel}"],
                                                    temps[f"{side}_lo_{element}_{channel}"],
                                                    low_temps[f"{side}_{element}_{channel}"],
                                                    high_temps[f"{side}_{element}_{channel}"],
                                                    lo_std, hi_std, element, side, channel)
 
-        all_data[f"{element}_{channel}"] = (temps[f"a_{element}_{channel}"] +
-                                            temps[f"b_{element}_{channel}"]) / 2.0
+        # weight each side by its standard deviation to get a final temperature estimate for each element
+        all_data[f"{element}_{channel}"] = stats.weighted_average(temps[f"a_{element}_{channel}"],
+                                                                  temps[f"b_{element}_{channel}"],
+                                                                  std_weight[f"a_{element}_{channel}"],
+                                                                  std_weight[f"b_{element}_{channel}"])
 
         if element == "xcal_cone":
             cal_data[f"{element}_{channel}"] = all_data[f"{element}_{channel}"]
@@ -271,8 +275,14 @@ for channel, channel_i in g.CHANNELS.items():
 
     temps[f"a_lo_dihedral"] = interpolators[f"a_lo_dihedral"](midpoint_time_s[channel])
     temps[f"b_lo_dihedral"] = interpolators[f"b_lo_dihedral"](midpoint_time_s[channel])
-    all_data[f"dihedral_{channel}"] = (temps[f"a_lo_dihedral"] + temps[f"b_lo_dihedral"]) * 0.5
+    std_weight[f"a_lo_dihedral"] = stats.estimate_noise(temps[f"a_lo_dihedral"], "dihedral")
+    std_weight[f"b_lo_dihedral"] = stats.estimate_noise(temps[f"b_lo_dihedral"], "dihedral")
+    all_data[f"dihedral_{channel}"] = stats.weighted_average(temps[f"a_lo_dihedral"],
+                                                             temps[f"b_lo_dihedral"],
+                                                             std_weight[f"a_lo_dihedral"],
+                                                             std_weight[f"b_lo_dihedral"])
 
+    # TODO: finish the weights of the sides down here
     temps[f"a_lo_collimator"] = interpolators[f"a_lo_collimator"](midpoint_time_s[channel])
     all_data[f"collimator_{channel}"] = temps[f"a_lo_collimator"]
     plt.plot(midpoint_time_s[channel], temps[f"a_lo_collimator"], label="a_lo_collimator")
