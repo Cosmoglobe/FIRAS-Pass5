@@ -256,10 +256,8 @@ for channel, channel_i in g.CHANNELS.items():
                                                    temps[f"{side}_hi_{element}_{channel}"],
                                                    temps[f"{side}_lo_{element}_{channel}"],
                                                    low_temps[f"{side}_{element}_{channel}"],
-                                                   high_temps[f"{side}_{element}_{channel}"], jumps,
+                                                   high_temps[f"{side}_{element}_{channel}"],
                                                    lo_std, hi_std, element, side, channel)
-
-            
 
         all_data[f"{element}_{channel}"] = (temps[f"a_{element}_{channel}"] +
                                             temps[f"b_{element}_{channel}"]) / 2.0

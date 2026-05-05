@@ -406,7 +406,7 @@ def estimate_noise(lo, hi, element):
 
     return jumps, lo_std, hi_std
 
-def debiase_hi(beta, hi, lo, low_temps, high_temps, jumps, lo_std, hi_std, element, side, channel):
+def debiase_hi(beta, hi, lo, low_temps, high_temps, lo_std, hi_std, element, side, channel):
     """
     Debiase the high temperature using the fitted Gaussian parameters.
     
@@ -430,7 +430,6 @@ def debiase_hi(beta, hi, lo, low_temps, high_temps, jumps, lo_std, hi_std, eleme
     debiased_hi = np.copy(lo)
     debiased_hi[~low_temps & ~high_temps] = (hi[~low_temps & ~high_temps] -
                                              oneoverT2(beta, hi[~low_temps & ~high_temps]))
-    # debiased_hi[low_temps or high_temps] = np.nan
 
     xsize = 1000 if element == "xcal_cone" else 10000
 
@@ -469,7 +468,27 @@ def debiase_hi(beta, hi, lo, low_temps, high_temps, jumps, lo_std, hi_std, eleme
             plt.close(fig_debias)
         print("Plotted check 1 -------------------------------------------------------------------")
 
-    return debiased_hi
+    temp_weight = (lo / lo_std**2 + debiased_hi / hi_std**2) / (1 / lo_std**2 + 1 / hi_std**2)
+
+    if g.VERBOSE > 2:
+        x = np.arange(len(hi))
+        for i in range(0, len(debiased_hi), xsize):
+            fig_debias, ax_debias = plt.subplots(figsize=(12, 6))
+            ax_debias.plot(x[i:i+xsize], lo[i:i+xsize], label='Low Current')
+            ax_debias.plot(x[i:i+xsize], hi[i:i+xsize],
+                    label='High Current', ls='None', marker='.', ms=4)
+            ax_debias.plot(x[i:i+xsize], temp_weight[i:i+xsize],
+                    label='Weighted Average', ls='None', marker='.', ms=4)
+            
+            ax_debias.set_ylabel("Temperature (K)")
+            ax_debias.set_xlabel("Record Index")
+            ax_debias.set_title(f"Temperatures measured for the {element_long_names[element]} "
+                                f"{side.upper()} side after debiasing and weighting")
+            ax_debias.legend()
+            fig_debias.savefig(f"data/output/debiase_hi/02_weighting/{i}.png")
+            plt.close(fig_debias)
+
+    return temp_weight
 
 if __name__ == "__main__":
     array = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
