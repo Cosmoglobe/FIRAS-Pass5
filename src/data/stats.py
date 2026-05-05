@@ -430,7 +430,7 @@ def debiase_hi(beta, hi, lo, low_temps, high_temps, jumps, lo_std, hi_std, eleme
     debiased_hi = np.copy(lo)
     debiased_hi[~low_temps & ~high_temps] = (hi[~low_temps & ~high_temps] -
                                              oneoverT2(beta, hi[~low_temps & ~high_temps]))
-    debiased_hi[low_temps or high_temps] = np.nan
+    # debiased_hi[low_temps or high_temps] = np.nan
 
     xsize = 1000 if element == "xcal_cone" else 10000
 
