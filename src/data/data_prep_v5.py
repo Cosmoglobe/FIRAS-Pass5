@@ -249,12 +249,17 @@ for element in elements:
 for channel, channel_i in g.CHANNELS.items():
     for element in elements:
         for side in sides:
+            jumps, lo_std, hi_std = stats.estimate_noise(temps[f"{side}_lo_{element}_{channel}"],
+                                                         temps[f"{side}_hi_{element}_{channel}"],
+                                                         element)
             temps[f"{side}_{element}_{channel}"] = stats.debiase_hi(beta[f"{element}_{side}"],
                                                    temps[f"{side}_hi_{element}_{channel}"],
                                                    temps[f"{side}_lo_{element}_{channel}"],
                                                    low_temps[f"{side}_{element}_{channel}"],
-                                                   high_temps[f"{side}_{element}_{channel}"],
-                                                   element, side, channel)
+                                                   high_temps[f"{side}_{element}_{channel}"], jumps,
+                                                   lo_std, hi_std, element, side, channel)
+
+            
 
         all_data[f"{element}_{channel}"] = (temps[f"a_{element}_{channel}"] +
                                             temps[f"b_{element}_{channel}"]) / 2.0
