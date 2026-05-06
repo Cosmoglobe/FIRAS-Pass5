@@ -475,6 +475,7 @@ def debiase_hi(beta, hi, lo, low_temps, high_temps, lo_std, hi_std, element, sid
         print("Plotted check 1 -------------------------------------------------------------------")
 
     temp_weight = (lo / lo_std**2 + debiased_hi / hi_std**2) / (1 / lo_std**2 + 1 / hi_std**2)
+    temp_weight[low_temps | high_temps] = lo[low_temps | high_temps]
 
     if g.VERBOSE > 2:
         x = np.arange(len(hi))
@@ -495,8 +496,12 @@ def debiase_hi(beta, hi, lo, low_temps, high_temps, lo_std, hi_std, element, sid
             plt.close(fig_debias)
         
     std_weight = 1 / np.sqrt(1 / lo_std**2 + 1 / hi_std**2)
+    std_weight[low_temps | high_temps] = lo_std[low_temps | high_temps]
 
-    return temp_weight, std_weight
+    if g.VERBOSE == -1:
+        return temp_weight, std_weight, lo, debiased_hi
+    else:
+        return temp_weight, std_weight
 
 if __name__ == "__main__":
     array = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
