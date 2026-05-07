@@ -358,7 +358,7 @@ def moving_std(a, n=3):
         result[i] = np.std(a[i*2:])
     return result
 
-def estimate_noise(lo, hi, element):
+def estimate_noise(lo, element, hi=None):
     n = 15
     lo_avg = moving_average(lo, n=n)
     lo_std = moving_std(lo, n=n)
@@ -390,7 +390,8 @@ def estimate_noise(lo, hi, element):
             ax_noise.vlines(curr_jumps, np.nanmin(lo[i:i+xsize]), np.nanmax(lo[i:i+xsize]),
                             label='Detected Jumps', color='C4')
             ax_noise.plot(x[i:i+xsize], lo[i:i+xsize], label='Low Current')
-            ax_noise.plot(x[i:i+xsize], hi[i:i+xsize], label='High Current')
+            if hi is not None:
+                ax_noise.plot(x[i:i+xsize], hi[i:i+xsize], label='High Current')
             ax_noise.plot(x[i:i+xsize], lo_avg[i:i+xsize], label='Moving Average')
             ax_noise.plot(x[i:i+xsize], lo_std[i:i+xsize]+2.7, label='Moving Std Dev+2.7',
                         ls='dashed')
@@ -402,9 +403,14 @@ def estimate_noise(lo, hi, element):
             fig_noise.savefig(f"data/output/estimate_noise/01_moving_average/{element}/{i}.png")
             plt.close(fig_noise)
 
-    hi_std = moving_std(hi, n=n)
-
-    return jumps, lo_std, hi_std
+    if hi is not None:
+        hi_std = moving_std(hi, n=n)
+        return lo_std, hi_std
+    else:
+        return lo_std
+    
+def weighted_average(a, b, a_std, b_std):
+    return (a / a_std**2 + b / b_std**2) / (1 / a_std**2 + 1 / b_std**2)
 
 def debiase_hi(beta, hi, lo, low_temps, high_temps, lo_std, hi_std, element, side, channel):
     """
@@ -469,6 +475,7 @@ def debiase_hi(beta, hi, lo, low_temps, high_temps, lo_std, hi_std, element, sid
         print("Plotted check 1 -------------------------------------------------------------------")
 
     temp_weight = (lo / lo_std**2 + debiased_hi / hi_std**2) / (1 / lo_std**2 + 1 / hi_std**2)
+    temp_weight[low_temps | high_temps] = lo[low_temps | high_temps]
 
     if g.VERBOSE > 2:
         x = np.arange(len(hi))
@@ -487,8 +494,14 @@ def debiase_hi(beta, hi, lo, low_temps, high_temps, lo_std, hi_std, element, sid
             ax_debias.legend()
             fig_debias.savefig(f"data/output/debiase_hi/02_weighting/{i}.png")
             plt.close(fig_debias)
+        
+    std_weight = 1 / np.sqrt(1 / lo_std**2 + 1 / hi_std**2)
+    std_weight[low_temps | high_temps] = lo_std[low_temps | high_temps]
 
-    return temp_weight
+    if g.VERBOSE == -1:
+        return temp_weight, std_weight, lo, debiased_hi
+    else:
+        return temp_weight, std_weight
 
 if __name__ == "__main__":
     array = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]

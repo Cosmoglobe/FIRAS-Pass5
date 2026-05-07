@@ -5,6 +5,7 @@ from scipy.optimize import minimize
 
 import globals as g
 from utils import my_utils as utils
+import os
 
 T_CMB = 2.72548  # Fixsen 2009
 
@@ -68,6 +69,7 @@ for mode in g.MODES_PLOT:
             else:
                 temps[pixi] = np.nan
 
+        os.system(f"rm -rf {g.SAVE_PATH}/maps/bb_temp/{channel}_{mode}.png")
         fig1 = plt.figure(1)
         hp.mollview(
             (temps - g.T_CMB)*1e3,
@@ -97,6 +99,7 @@ for mode in g.MODES_PLOT:
         tf = minimize(utils.residuals, t0, args=(f_ghz, bb_curve_data)).x[0]
         print(f"BB temperature according to {channel.upper()}{mode.upper()} average temperature after fitting per pixel and fitting after averaging over sky: {bb_temp:.5f} K and {tf:.5f} K")
         
+        os.remove(f"{g.SAVE_PATH}/plots/bb_curve/{channel}_{mode}.png")
         fig2 = plt.figure(2)
         plt.plot(
             f_ghz,
@@ -121,10 +124,10 @@ for mode in g.MODES_PLOT:
         plt.grid()
         plt.legend()
         plt.savefig(f"{g.SAVE_PATH}/plots/bb_curve/{channel}_{mode}.png")
-        plt.savefig("debug.png")
         plt.close(fig2)
 
         # plot also subtracted
+        os.remove(f"{g.SAVE_PATH}/plots/bb_curve/{channel}_{mode}_difference.png")
         fig3 = plt.figure(3)
         difference = bb_curve_data - utils.planck(f_ghz, t0)
         plt.plot(f_ghz, difference, label="Difference")
