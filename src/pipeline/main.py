@@ -70,7 +70,7 @@ for channel, channel_value in g.CHANNELS.items():
                 fits_data[1].data["RTRANSFE"][0] + 1j * fits_data[1].data["ITRANSFE"][0]
             )
             otf = otf[np.abs(otf) > 0]
-            apod = fits_data[1].data["APODIZAT"][0]
+            apod = np.ones_like(fits_data[1].data["APODIZAT"][0])
 
             mode_data[f"spec_{channel}"] = ifg_spec.ifg_to_spec(
                 ifg=mode_data[f"ifg_{channel}"],

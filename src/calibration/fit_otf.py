@@ -73,11 +73,14 @@ def S(nui, frequencies, temps):
 
 def full_function(Ei, nui, ifg, channel, mode, gain, sweeps, bol_cmd_bias, bol_volt, temps,
                   adds_per_group, fnyq_icm, frequencies):
-    result = (D(Ei, nui, ifg, channel, mode, gain, sweeps, bol_cmd_bias, bol_volt, temps,
-                adds_per_group, fnyq_icm) - R(Ei, nui, temps, frequencies) - S(nui, frequencies,
-                                                                               temps))
 
-    return np.sum(np.abs(result) ** 2)  # Use abs to handle complex numbers properly
+
+    Di = D(Ei, nui, ifg, channel, mode, gain, sweeps, bol_cmd_bias, bol_volt, temps,
+                    adds_per_group, fnyq_icm) 
+    Ri = R(Ei, nui, temps, frequencies) 
+    Si = S(nui, frequencies,temps)
+
+    return np.sum(np.abs(Ei[0]*(Ri - Di - Si)) ** 2)  # Use abs to handle complex numbers properly
 
 
 def real_to_complex(z):
@@ -100,8 +103,9 @@ def full_function_real(Ei_real, nui, ifg, channel, mode, gain, sweeps, bol_cmd_b
                        temps, adds_per_group, fnyq_icm, frequencies):
     """Wrapper that converts real parameters to complex for optimization."""
     Ei = real_to_complex(Ei_real)
-    return full_function(Ei, nui, ifg, channel, mode, gain, sweeps, bol_cmd_bias, bol_volt, temps,
+    ff = full_function(Ei, nui, ifg, channel, mode, gain, sweeps, bol_cmd_bias, bol_volt, temps,
                          adds_per_group, fnyq_icm, frequencies)
+    return ff
 
 
 # Global variables for multiprocessing to avoid copying large arrays
@@ -178,7 +182,7 @@ def fit_single_frequency(nui):
     fits_bolomet = _global_data['fits_bolomet']
 
     # Set initial guess as the published emissivities (only for this frequency)
-    Ei0 = np.zeros((10, 257), dtype=complex)
+    Ei0 = np.ones((10, 257), dtype=complex) +  1j*np.ones((10, 257), dtype=complex)
     Ei0[0][cutoff:cutoff+len(otf)] = otf
     Ei0[1][cutoff:cutoff+len(otf)] = fits_ical
     Ei0[2][cutoff:cutoff+len(otf)] = fits_dihedra
@@ -190,38 +194,53 @@ def fit_single_frequency(nui):
     Ei0[8] = Ei0[6]
     Ei0[9] = Ei0[6]
 
+
+    Ei0 *= np.random.randn(10,257)
+
     Ei0_real = complex_to_real(Ei0)
 
 
-    x, f, d = fmin_l_bfgs_b(
-        full_function_real,
-        Ei0_real,
-        args=(
-            nui,
-            ifg,
-            channel,
-            mode,
-            gain,
-            sweeps,
-            bol_cmd_bias,
-            bol_volt,
-            temps,
-            adds_per_group,
-            fnyq_icm,
-            frequencies,
-        ),
-        approx_grad=True,
-        epsilon=1e-8,  # Larger epsilon for more stable gradient approximation
-        maxiter=500,
-        factr=1e7,  # Moderate tolerance
-        pgtol=1e-5,
-    )
+
+    warnflag = 2
+
+    while warnflag == 2:
+
+        x, f, d = fmin_l_bfgs_b(
+            full_function_real,
+            Ei0_real[:,nui],
+            args=(
+                nui,
+                ifg,
+                channel,
+                mode,
+                gain,
+                sweeps,
+                bol_cmd_bias,
+                bol_volt,
+                temps,
+                adds_per_group,
+                fnyq_icm,
+                frequencies,
+            ),
+            approx_grad=True,
+            epsilon=1e-8,  # Larger epsilon for more stable gradient approximation
+            maxiter=5000,
+            factr=1e7,  # Moderate tolerance
+            pgtol=1e-5,
+        )
+        warnflag = d.get('warnflag')
+        if d.get('warnflag') == 2:
+            Ei0 *= np.random.randn(10,257)
+            Ei0_real = complex_to_real(Ei0)
+
 
     # If L-BFGS-B fails with line search error, try Powell method (derivative-free)
     if d.get("warnflag") == 2:
+        print("This has failed!")
+        print(x, f, d, frequencies[nui])
         result = minimize(
             full_function_real,
-            Ei0_real,
+            Ei0_real[:,nui],
             args=(
                 nui,
                 ifg,
@@ -237,7 +256,7 @@ def fit_single_frequency(nui):
                 frequencies,
             ),
             method="Powell",
-            options={"maxiter": 1000, "ftol": 1e-6},
+            options={"maxiter": 5000, "ftol": 1e-6},
         )
         x = result.x
         success = result.success
@@ -350,10 +369,11 @@ if __name__ == "__main__":
             fnyq_icm = fnyq["icm"][frec]
 
             # 10 emissivities to fit
-            solution = np.zeros((g.SPEC_SIZE, temps.shape[0]), dtype=complex)  
+            solution = np.zeros((g.SPEC_SIZE, 10), dtype=complex)  
 
             # Determine number of processes to use
-            n_processes = cpu_count() // 10
+            n_processes = cpu_count() 
+            #n_processes = 1
             print(f"Using {n_processes} CPU cores for parallel processing")
             
             mem = get_memory_usage()
@@ -371,7 +391,8 @@ if __name__ == "__main__":
                                 adds_per_group, fnyq_icm, frequencies, cutoff)) as pool:
                 # Use imap to maintain order and track progress
                 results = []
-                for i, result in enumerate(pool.imap(fit_single_frequency, range(g.SPEC_SIZE)), 1):
+                for i, result in enumerate(pool.imap(fit_single_frequency,
+                    range(1,g.SPEC_SIZE)), 1):
                     results.append(result)
                     # Print progress every 10 frequencies or at the end
                     if i % 10 == 0 or i == g.SPEC_SIZE:

@@ -17,10 +17,9 @@ def clean_ifg(
     sweeps,
     apod,
 ):
+
     # print(f"DEBUG ifg shape before cleaning: {ifg.shape}")
     if len(ifg.shape) == 2:
-        median_ifg = np.median(ifg, axis=1)
-        median_ifg = median_ifg[:, np.newaxis]
 
         gain = gain[:, np.newaxis]
         sweeps = sweeps[:, np.newaxis]
@@ -29,11 +28,7 @@ def clean_ifg(
     else:
         raise ValueError("ifg has invalid shape")
 
-    # subtract dither
-    ifg = ifg - median_ifg
-
-    ifg = ifg / gain / sweeps
-    ifg = ifg * apod
+    ifg = ifg / (gain * sweeps)
 
     # roll
     peak_pos = g.PEAK_POSITIONS[f"{channel}_{mode}"]
@@ -130,6 +125,7 @@ def ifg_to_spec(
     apod: apodization function, from the calibration model
     """
 
+
     ifg = clean_ifg(ifg, channel, mode, gain, sweeps, apod)
 
     spec = np.fft.rfft(ifg)
@@ -160,7 +156,7 @@ def ifg_to_spec(
     B = bolometer.get_bolometer_response_function(
         channel, mode, bol_cmd_bias, bol_volt, Tbol, nui=nui
     )
-    spec = spec / B
+    spec = spec / B[:,0]
 
     if nui is None:
         if mtm_speed == 0:
