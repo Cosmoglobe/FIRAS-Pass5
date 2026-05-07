@@ -29,18 +29,19 @@ fnyq = gen_nyquistl(
 )
 
 for channel in g.CHANNELS.keys():
-    data = np.load(f"{g.PREPROCESSED_DATA_PATH}cal_{channel}.npz", "r")
+    data = np.load(f"{g.PREPROCESSED_DATA_PATH}cal.npz", "r")
 
-    mtm_length = data["mtm_length"][:]
-    mtm_speed = data["mtm_speed"][:]
+    mtm_length = data[f"mtm_length_{channel}"][:]
+    mtm_speed = data[f"mtm_speed_{channel}"][:]
 
     for mode in g.MODES.keys():
         if mode == "lf" and (channel[1] == "h"):
             continue
         # open fitted_emissivities.npy and plot the results
-        fitted_emissivities = np.load(
-            f"./calibration/output/fitted_emissivities_{channel}_{mode}.npy"
-        )
+        # fitted_emissivities = np.load(
+        #     f"./calibration/output/fitted_emissivities_{channel}_{mode}.npy"
+        # )
+        fitted_emissivities = np.load("/mn/stornext/u3/duncanwa/FIRAS-Pass5/src/calibration/output/original_pipeline.npy")
         frequencies = utils.generate_frequencies(channel, mode, 257)
 
         plt.figure(figsize=(10, 6))
@@ -102,6 +103,9 @@ for channel in g.CHANNELS.keys():
             "Skyhorn",
             "Collimator",
             "Bolometer",
+            "Bolometer",
+            "Bolometer",
+            "Bolometer",
         ]
         for i in range(fitted_emissivities.shape[1]):
             ax[i].plot(
@@ -113,18 +117,20 @@ for channel in g.CHANNELS.keys():
                 color="red",
                 linestyle="dashed",
             )
-            ax[i].plot(
-                frequencies_pub,
-                emissivities[:, i].real,
-                label="Published",
-                color="black",
-            )
-            ax[i].plot(
-                frequencies_pub,
-                emissivities[:, i].imag,
-                color="black",
-                linestyle="dashed",
-            )
+            if i < 7:
+                ax[i].plot(
+                    frequencies_pub,
+                    emissivities[:, i].real,
+                    label="Published",
+                    color="black",
+                )
+            else:
+                ax[i].plot(
+                    frequencies_pub,
+                    emissivities[:, 6].imag,
+                    color="black",
+                    linestyle="dashed",
+                )
             ax[i].set_xlabel("Frequency (GHz)")
             ax[i].set_ylabel("Emissivity")
             ax[i].set_title(f"{labels[i]} Emissivity Comparison")
@@ -150,20 +156,20 @@ for channel in g.CHANNELS.keys():
 
         # calculate calibration residuals with both sets of emissivities and compare
         # print(f"data keys: {list(data.keys())}")
-        ifgs = ifg = data[f"ifg"][mode_filter]
-        gain = data[f"gain"][mode_filter]
-        sweeps = data["sweeps"][mode_filter]
-        bol_cmd_bias = data[f"bol_cmd_bias"][mode_filter]
-        bol_volt = data[f"bol_volt"][mode_filter]
+        ifgs = ifg = data[f"ifg_{channel}"][mode_filter]
+        gain = data[f"gain_{channel}"][mode_filter]
+        sweeps = data[f"sweeps_{channel}"][mode_filter]
+        bol_cmd_bias = data[f"bol_cmd_bias_{channel}"][mode_filter]
+        bol_volt = data[f"bol_volt_{channel}"][mode_filter]
 
-        xcal = data["xcal_cone"][mode_filter]  # TODO: update this
-        ical = data["ical"][mode_filter]
-        dihedral = data["dihedral"][mode_filter]
-        refhorn = data["refhorn"][mode_filter]
-        skyhorn = data["skyhorn"][mode_filter]
-        collimator = data["collimator"][mode_filter]
+        xcal = data[f"xcal_cone_{channel}"][mode_filter]  # TODO: update this
+        ical = data[f"ical_{channel}"][mode_filter]
+        dihedral = data[f"dihedral_{channel}"][mode_filter]
+        refhorn = data[f"refhorn_{channel}"][mode_filter]
+        skyhorn = data[f"skyhorn_{channel}"][mode_filter]
+        collimator = data[f"collimator_{channel}"][mode_filter]
         # TODO: fit for all bolometers
-        bolometer = data["bolometer"][mode_filter]
+        bolometer = data[f"bolometer_{channel}"][mode_filter]
         temps = np.array(
             [
                 xcal,
@@ -176,7 +182,7 @@ for channel in g.CHANNELS.keys():
             ]
         )
         # print(f"temps shape: {np.array(temps).shape}")
-        adds_per_group = data["adds_per_group"][mode_filter]
+        adds_per_group = data[f"adds_per_group_{channel}"][mode_filter]
 
         frec = 4 * (g.CHANNELS[channel] % 2) + g.MODES[mode]
         fnyq_icm = fnyq["icm"][frec]
