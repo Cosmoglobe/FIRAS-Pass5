@@ -7,8 +7,6 @@ import globals as g
 from utils import my_utils as utils
 
 T_CMB = 2.72548  # Fixsen 2009
-modes = {"ss": 0, "lf": 3}
-channels = {"rl": 1, "ll": 3}
 
 mask_gal = hp.read_map("/mn/stornext/d16/cmbco/ola/masks/HI_mask_4e20_n1024.fits")
 mask_alm = hp.sphtfunc.map2alm(mask_gal, pol=False)
@@ -21,8 +19,8 @@ beta_dust = 1.55
 t_dust = np.array(20.8)  # u.K
 optical_depth_nu0 = 9.6 * 10 ** (-7)
 
-for mode in modes.keys():
-    for channel in channels.keys():
+for mode in g.MODES_PLOT:
+    for channel in g.CHANNELS_PLOT:
         data = np.load(f"{g.PROCESSED_DATA_PATH}sky_{channel}_{mode}.npz", allow_pickle=True)
         
         length_filter = data[f"mtm_length_{channel}"] == (0 if mode[0] == "s" else 1)

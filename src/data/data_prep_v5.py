@@ -2,22 +2,15 @@
 So for this version we will keep each channel separate and use the midpoint_time to interpolate to get the temperatures.
 """
 
+import time
+
 import astropy.units as u
 import h5py
-import matplotlib
-
-import data.utils.my_utils as data_utils
-import globals as g
-
-matplotlib.use('Agg')  # Use non-interactive backend
-import os
-import time
-from functools import partial
-from multiprocessing import Pool
-
 import matplotlib.pyplot as plt
 import numpy as np
 
+import data.utils.my_utils as data_utils
+import globals as g
 from data import stats
 from engineering_timing.get_interpolated_times import get_data, get_interp
 
@@ -29,7 +22,9 @@ with open(f"data/plateau_divides.txt", "r") as f:
     lines = f.readlines()
     for line in lines:
         parts = line.strip().split(" ")
-        if len(parts) >= 2:
+        if parts[0] == "#":
+            continue
+        elif len(parts) >= 2:
             name = parts[0]
             plateau_divides_cache[name] = np.array(parts[1].split(",")).astype(float)
 
@@ -76,12 +71,17 @@ mu_err = {}
 avg_temp = {}
 temp_err = {}
 temps = {}
+low_temps = {}
+high_temps = {}
 elements = ["ical", "xcal_cone", "refhorn", "skyhorn"]
 sides = ["a", "b"]
 
 cal_mask = {}
 sky_mask = {}
 midpoint_time_s = {}
+
+low_bound = 2.25 # K
+high_bound = 4 # K
 
 for channel, channel_i in g.CHANNELS.items():
     science_data = fdq_sdf[f"fdq_sdf_{channel}"]
@@ -105,8 +105,8 @@ for channel, channel_i in g.CHANNELS.items():
 
     collect_time = science_data["collect_time"]
     all_data[f"midpoint_time_{channel}"] = np.sort(collect_time["midpoint_time"][:])
-    all_data[f"midpoint_time_s_{channel}"] = (collect_time["midpoint_time"][:] * (100 * u.ns)).to("s")
-    all_data[f"midpoint_time_gmt_{channel}"] = data_utils.binary_to_gmt(collect_time["midpoint_time"][:])
+    all_data[f"midpoint_time_s_{channel}"] = (all_data[f"midpoint_time_{channel}"] * (100 * u.ns)).to("s")
+    all_data[f"midpoint_time_gmt_{channel}"] = data_utils.binary_to_gmt(all_data[f"midpoint_time_{channel}"])
 
     attitude = science_data["attitude"]
     all_data[f"cel_lon_{channel}"] = attitude["ra"][:] * fact
@@ -124,11 +124,18 @@ for channel, channel_i in g.CHANNELS.items():
 
     print(f"\n\nChannel: {channel.upper()}")
 
-    stats.table3_4(all_data[f"xcal_pos_{channel}"], all_data[f"mtm_length_{channel}"], all_data[f"mtm_speed_{channel}"])
+    # if channel is rh then we want to get rid of the first point (weird timing)
+    if channel == "rh":
+        for key in all_data:
+            if key.endswith(f"_{channel}"):
+                all_data[key] = all_data[key][1:]
 
-    fpp_fail, fakeit, xcal_transit = stats.table4_1(
-        all_data[f"data_quality_{channel}"], all_data[f"fake_{channel}"], all_data[f"xcal_pos_{channel}"]
-    )
+    stats.table3_4(all_data[f"xcal_pos_{channel}"], all_data[f"mtm_length_{channel}"],
+                   all_data[f"mtm_speed_{channel}"])
+
+    fpp_fail, fakeit, xcal_transit = stats.table4_1(all_data[f"data_quality_{channel}"],
+                                                    all_data[f"fake_{channel}"],
+                                                    all_data[f"xcal_pos_{channel}"])
 
     for key in all_data:
         if key.endswith(f"_{channel}"):
@@ -144,22 +151,12 @@ for channel, channel_i in g.CHANNELS.items():
             cal_data[key] = all_data[key][cal_mask[channel]]
             sky_data[key] = all_data[key][sky_mask[channel]]
 
-    (
-        cal_saturated,
-        cal_sw,
-        cal_glitch_rate,
-        sky_saturated,
-        sky_sw,
-        sky_glitch_rate,
-        limb,
-        no_solution,
-    ) = stats.table4_2(
-        cal_data[f"saturated_{channel}"],
-        cal_data[f"data_quality_{channel}"],
-        sky_data[f"saturated_{channel}"],
-        sky_data[f"data_quality_{channel}"],
-        sky_data[f"solution_{channel}"],
-    )
+    (cal_saturated, cal_sw, cal_glitch_rate, sky_saturated, sky_sw, sky_glitch_rate, limb,
+     no_solution) = stats.table4_2(cal_data[f"saturated_{channel}"], 
+                                   cal_data[f"data_quality_{channel}"],
+                                   sky_data[f"saturated_{channel}"],
+                                   sky_data[f"data_quality_{channel}"],
+                                   sky_data[f"solution_{channel}"])
 
     # Combine cuts before applying
     cal_cuts = ~(cal_saturated | cal_sw | cal_glitch_rate)
@@ -173,7 +170,7 @@ for channel, channel_i in g.CHANNELS.items():
     # the next table to reproduce needs the ICAL temperatures so we need to match them now
     # Interpolate temperatures for sky data
     # the dihdral operates at different temperatures and thus we use a different method for it
-    # same for the collimator
+    # same for the collimator and mirror
 
     print(f"Testing new way for de-biasing temperatures for ICAL and using the previous one for the rest")
     print(f"Taking the average of both sides")
@@ -188,7 +185,7 @@ for channel, channel_i in g.CHANNELS.items():
     midpoint_time_s[channel] = midpoint_time_s[channel][sorted_indices]
     xcal_pos = xcal_pos[sorted_indices]
     
-    # Batch interpolatetemperatures for all elements and sides
+    # Batch interpolate temperatures for all elements and sides
     print("Batch interpolating temperatures...")
     
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -206,6 +203,9 @@ for channel, channel_i in g.CHANNELS.items():
                 temps[f"{side}_hi_{element}_{channel}"] = temps[f"{side}_hi_{element}_{channel}"][cal_mask[channel]]
                 temps[f"{side}_lo_{element}_{channel}"] = temps[f"{side}_lo_{element}_{channel}"][cal_mask[channel]]
 
+            low_temps[f"{side}_{element}_{channel}"] = temps[f"{side}_lo_{element}_{channel}"] <= low_bound
+            high_temps[f"{side}_{element}_{channel}"] = temps[f"{side}_hi_{element}_{channel}"] >= high_bound
+
             print(f"Dividing {side.upper()} side ICAL temperatures into plateaus to try to de-bias them")
             plateau_masks = stats.divide_plateaus(temps[f"{side}_lo_{element}_{channel}"],
                                                     channel, element, side, plateau_divides_cache)
@@ -219,9 +219,9 @@ for channel, channel_i in g.CHANNELS.items():
 
             # Fit gaussians for each plateau
             for i, mask in enumerate(plateau_masks):
-                output = stats.fit_gaussian(temps[f"{side}_hi_{element}_{channel}"][mask],
-                                            temps[f"{side}_lo_{element}_{channel}"][mask], channel,
-                                            element, side, sigma=1, plateau=i+1)
+                output = stats.fit_gaussian(temps[f"{side}_hi_{element}_{channel}"][mask & ~low_temps[f"{side}_{element}_{channel}"] & ~high_temps[f"{side}_{element}_{channel}"]],
+                                            temps[f"{side}_lo_{element}_{channel}"][mask & ~low_temps[f"{side}_{element}_{channel}"] & ~high_temps[f"{side}_{element}_{channel}"]],
+                                            channel, element, side, plateau=i+1)
 
                 mu[keyword][i] = output[0]
                 mu_err[keyword][i] = output[1]
@@ -242,16 +242,22 @@ for element in elements:
         mu_err_all = np.concatenate([mu_err[f"{side}_{element}_{channel}"] for channel in g.CHANNELS])
         avg_temp_all = np.concatenate([avg_temp[f"{side}_{element}_{channel}"] for channel in g.CHANNELS])
         temp_err_all = np.concatenate([temp_err[f"{side}_{element}_{channel}"] for channel in g.CHANNELS])
-        beta[f"{element}_{side}"] = stats.selfheat_vs_temp(mu_all, mu_err_all, avg_temp_all, temp_err_all, element, side)
+        beta[f"{element}_{side}"] = stats.selfheat_vs_temp(mu_all, mu_err_all, avg_temp_all,
+                                                           temp_err_all, element, side)
         # print(f"Fitted self-heating for {element} {side.upper()}: beta={beta:.6f}")
 
 for channel, channel_i in g.CHANNELS.items():
     for element in elements:
         for side in sides:
+            jumps, lo_std, hi_std = stats.estimate_noise(temps[f"{side}_lo_{element}_{channel}"],
+                                                         temps[f"{side}_hi_{element}_{channel}"],
+                                                         element)
             temps[f"{side}_{element}_{channel}"] = stats.debiase_hi(beta[f"{element}_{side}"],
                                                    temps[f"{side}_hi_{element}_{channel}"],
-                                                   temps[f"{side}_lo_{element}_{channel}"], element,
-                                                   side, channel)
+                                                   temps[f"{side}_lo_{element}_{channel}"],
+                                                   low_temps[f"{side}_{element}_{channel}"],
+                                                   high_temps[f"{side}_{element}_{channel}"],
+                                                   lo_std, hi_std, element, side, channel)
 
         all_data[f"{element}_{channel}"] = (temps[f"a_{element}_{channel}"] +
                                             temps[f"b_{element}_{channel}"]) / 2.0
@@ -265,12 +271,30 @@ for channel, channel_i in g.CHANNELS.items():
 
     temps[f"a_lo_dihedral"] = interpolators[f"a_lo_dihedral"](midpoint_time_s[channel])
     temps[f"b_lo_dihedral"] = interpolators[f"b_lo_dihedral"](midpoint_time_s[channel])
-    all_data[f"dihedral_{channel}"] = (temps[f"a_lo_dihedral"] + temps[f"b_lo_dihedral"]) / 2.0
+    all_data[f"dihedral_{channel}"] = (temps[f"a_lo_dihedral"] + temps[f"b_lo_dihedral"]) * 0.5
 
     temps[f"a_lo_collimator"] = interpolators[f"a_lo_collimator"](midpoint_time_s[channel])
     all_data[f"collimator_{channel}"] = temps[f"a_lo_collimator"]
+    plt.plot(midpoint_time_s[channel], temps[f"a_lo_collimator"], label="a_lo_collimator")
+    plt.savefig(f"data/output/temperatures/collimator/{channel}", dpi=150)
+    plt.close()
 
-    for element in ["dihedral", "collimator"]:
+    temps[f"a_lo_mirror"] = interpolators[f"a_lo_mirror"](midpoint_time_s[channel])
+    temps[f"b_lo_mirror"] = interpolators[f"b_lo_mirror"](midpoint_time_s[channel])
+    # check for nans
+    if np.isnan(temps[f"a_lo_mirror"]).any() or np.isnan(temps[f"b_lo_mirror"]).any():
+        print(f"Warning: NaN values found in mirror temperatures for channel {channel.upper()}.")
+        quit()
+    # plot to double check there is nothing wrong with these - DEBUG
+    plt.plot(midpoint_time_s[channel], temps[f"a_lo_mirror"], label="a_lo_mirror")
+    plt.plot(midpoint_time_s[channel], temps[f"b_lo_mirror"], label="b_lo_mirror")
+    plt.savefig(f"data/output/temperatures/mirror/{channel}", dpi=150)
+    plt.close()
+    print("Plotted mirror temperatures for debugging - check the plots to make sure there are no issues.")
+    
+    all_data[f"mirror_{channel}"] = (temps[f"a_lo_mirror"] + temps[f"b_lo_mirror"]) * 0.5
+
+    for element in ["dihedral", "collimator", "mirror"]:
         cal_data[f"{element}_{channel}"] = all_data[f"{element}_{channel}"][cal_mask[channel]]
         sky_data[f"{element}_{channel}"] = all_data[f"{element}_{channel}"][sky_mask[channel]]
 
@@ -534,7 +558,5 @@ np.savez_compressed(
 )
 
 elapsed_time = time.time() - start_time
-print(f"\n\nAll channels processed successfully!")
-print(f"Total time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
 print(f"\n\nAll channels processed successfully!")
 print(f"Total time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")

@@ -195,7 +195,8 @@ def divide_plateaus(lo, channel, element, side, plateau_divides_cache=None, n_co
     if n_cores is None:
         n_cores = max(1, os.cpu_count() - 2)  # Leave 2 cores free
 
-    print(f"Minimum and maximum low current {channel} ({side.upper()} side) for {element}: {lo.min():.3f}, {lo.max():.3f}")
+    print(f"Minimum and maximum low current {channel} ({side.upper()} side) for {element}: "
+          f"{np.nanmin(lo):.3f}, {np.nanmax(lo):.3f}")
 
     # Use cached plateau divides if available, otherwise read from file
     if plateau_divides_cache is not None and f"{element}_{side}" in plateau_divides_cache:
@@ -248,7 +249,7 @@ def divide_plateaus(lo, channel, element, side, plateau_divides_cache=None, n_co
     return plateau_masks
 
 
-def fit_gaussian(hi, lo, channel, element, side, sigma=3, plateau=0):
+def fit_gaussian(hi, lo, channel, element, side, plateau=0):
     """Fit a Gaussian to the difference between hi and lo temperatures."""
     if g.VERBOSE > 1:
         print("Starting fit_gaussian -------------------------------------------------------------")
@@ -285,8 +286,6 @@ def fit_gaussian(hi, lo, channel, element, side, sigma=3, plateau=0):
         p = norm.pdf(x, mu, std)
         ax_gauss.plot(x, p, ls='dashed', label=f'Gaussian for Plateau {plateau}')
         print(f"Fitted gaussian for plateau {plateau} for {element} {side} {channel}: mu={mu:.04f}, std={std:.04f}")
-        explained = len(diff[(diff > mu - sigma*std) & (diff < mu + sigma*std)]) / len(diff)
-        print(f"Explained fraction by the gaussian at {sigma} std: {explained*100:.02f}%")
 
         ax_gauss.legend()
         fig_gauss.savefig(f"data/output/fit_gaussian/01_hilo_temp_difference/{channel}/{element}/{side}_plateau_{plateau}.png")
@@ -294,51 +293,11 @@ def fit_gaussian(hi, lo, channel, element, side, sigma=3, plateau=0):
         print("Plotted check 1 -------------------------------------------------------------------")
     return mu, mu_err, avg_temp, temp_err
 
-def negative_exponential(beta, x):
-    A = beta[0]
-    lamb = beta[1]
-    return A * np.exp(lamb * x)
-
-def linear_model(beta, x):
-    m = beta[0]
-    b = beta[1]
-    return m * x + b
-
-def power_law(beta, x):
-    A = beta[0]
-    alpha = beta[1]
-    return A * x**(alpha)
-
-def double_power_law(beta, x):
-    A1 = beta[0]
-    alpha1 = beta[1]
-    A2 = beta[2]
-    alpha2 = beta[3]
-    return A1 * x**(alpha1) + A2 * x**(alpha2)
-
-def electronics_model(beta, x):
-    level = beta[0]
-    T_knee1 = beta[1]
-    T_knee2 = beta[2]
-    alpha = beta[3]
-    A1 = beta[4]
-    A2 = beta[5]
-
-    # return level + (T_knee1 / x) ** 2 + (x / T_knee2) ** alpha
-    return level + A1 * (T_knee1 / x) ** 2 + A2 * (x / T_knee2) ** alpha
-
-def electronics_model2(beta, x):
-    level = beta[0]
-    T_knee = beta[1]
-    A1 = beta[2]
-    m = beta[3]
-
-    return level + A1 * (T_knee / x) ** 2 + m * x
-
 def oneoverT2(beta, x):
     level = beta[0]
     T_knee = beta[1]
-    return level + (T_knee / x) ** 2
+    A = beta[2]
+    return level + A * (T_knee / x) ** 2
 
 def selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side):
     print(f"Number of points being fit: {len(mu)}")
@@ -359,42 +318,8 @@ def selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side):
     sy = np.abs(mu_err)  # Uncertainty in y (sigma_y)
     data = odr.Data(avg_temp, mu, wd=1/sx**2, we=1/sy**2)  # wd: x weights, we: y weights
 
-    model = odr.Model(negative_exponential)
-    # Initialize ODR with model, data, and initial parameter guess
-    odr_obj = odr.ODR(data, model, beta0=[1.0, -1.0])
-    # Run the fit
-    odr_result_exp = odr_obj.run()
-    print(f"Residual variance for negative exponential: {odr_result_exp.res_var:.3f}")
-
-    model = odr.Model(linear_model)
-    odr_obj = odr.ODR(data, model, beta0=[0.0, 0.0])
-    odr_result_linear = odr_obj.run()
-    print(f"Residual variance for linear model: {odr_result_linear.res_var:.3f}")
-
-    model = odr.Model(power_law)
-    odr_obj = odr.ODR(data, model, beta0=[1.0, -1.0])
-    odr_result_power = odr_obj.run()
-    print(f"Residual variance for power law: {odr_result_power.res_var:.3f}")
-
-    model = odr.Model(double_power_law)
-    odr_obj = odr.ODR(data, model, beta0=[1.0, 1.0, 1.0, -1.0])
-    odr_result_double_power = odr_obj.run()
-    print(f"Residual variance for double power law: {odr_result_double_power.res_var:.3f}")
-
-    model = odr.Model(electronics_model)
-    odr_obj = odr.ODR(data, model, beta0=[0, 4, 6, 0, 1, 1])
-    # odr_obj = odr.ODR(data, model, beta0=[1, 4, 6, 0])
-    odr_result_electronics = odr_obj.run()
-    print(f"Residual variance for electronics model: {odr_result_electronics.res_var:.3f}")
-
-    model = odr.Model(electronics_model2)
-    odr_obj = odr.ODR(data, model, beta0=[0, 4, 1, 6])
-    # odr_obj = odr.ODR(data, model, beta0=[1, 4, 6, 0])
-    odr_result_electronics2 = odr_obj.run()
-    print(f"Residual variance for electronics model2: {odr_result_electronics2.res_var:.3f}")
-
     model = odr.Model(oneoverT2)
-    odr_obj = odr.ODR(data, model, beta0=[0, 3])
+    odr_obj = odr.ODR(data, model, beta0=[0, 3, 1])
     odr_result_oneoverT2 = odr_obj.run()
     print(f"Residual variance for 1/T^2 model: {odr_result_oneoverT2.res_var:.3f}")
 
@@ -402,12 +327,6 @@ def selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side):
         plt.figure()  # Create a new figure for the fit plots
         plt.errorbar(avg_temp, mu, yerr=mu_err, xerr=temp_err, fmt='o', label='Data')
         x = np.linspace(avg_temp.min() - 0.5, avg_temp.max() + 0.5, 100)
-        plt.plot(x, negative_exponential(odr_result_exp.beta, x), label="Negative exponential")
-        plt.plot(x, linear_model(odr_result_linear.beta, x), label="Linear")
-        plt.plot(x, power_law(odr_result_power.beta, x), label="Power law")
-        plt.plot(x, double_power_law(odr_result_double_power.beta, x), label="Double power law")
-        plt.plot(x, electronics_model(odr_result_electronics.beta, x), label="Electronics model")
-        plt.plot(x, electronics_model2(odr_result_electronics2.beta, x), label="Electronics model2")
         plt.plot(x, oneoverT2(odr_result_oneoverT2.beta, x), label="1/T^2 model")
         plt.xlabel("Average High Current Temperature (K)")
         plt.ylabel("Fitted Gaussian Mean of High-Low Difference (K)")
@@ -417,16 +336,100 @@ def selfheat_vs_temp(mu, mu_err, avg_temp, temp_err, element, side):
         plt.close()
         print("Plotted check 1 -------------------------------------------------------------------")
 
-    return odr_result_electronics.beta
+    return odr_result_oneoverT2.beta
     
-def debiase_hi(beta, hi, lo, element, side, channel):
-    """Debiase the high temperature using the fitted Gaussian parameters."""
+def moving_average(a, n=3):
+    result = np.convolve(a, np.ones(n)/n, mode='same')
+    for i in range(0, n):
+        result[i] = np.average(a[0:i*2+1])
+    for i in range(len(a)-n+1, len(a)):
+        result[i] = np.average(a[i*2:])
+    return result
+
+def moving_std(a, n=3):
+    result = np.zeros_like(a)
+    for i in range(n, len(a)-n+1):
+        start = max(0, i - n//2)
+        end = min(len(a), i + n//2 + 1)
+        result[i] = np.std(a[start:end])
+    for i in range(0, n):
+        result[i] = np.std(a[0:i*2+1])
+    for i in range(len(a)-n+1, len(a)):
+        result[i] = np.std(a[i*2:])
+    return result
+
+def estimate_noise(lo, hi, element):
+    n = 15
+    lo_avg = moving_average(lo, n=n)
+    lo_std = moving_std(lo, n=n)
+
+    # these are gotten by eye checking all the data
+    low_cut = 0.005
+    med_cut = 0.08
+    high_cut = 0.6
+    
+    jumps = []
+    for i in range(len(lo)):
+        if (lo_avg[i] < 4) and (lo_std[i] > low_cut):
+            jumps.append(i)
+        elif (lo_avg[i] >= 4) and (lo_avg[i] < 10) and (lo_std[i] > med_cut):
+            jumps.append(i)
+        elif (lo_avg[i] >= 10) and (lo_std[i] > high_cut):
+            jumps.append(i)
+
+    if g.VERBOSE > 2:
+        xsize = 1000 if element == "xcal_cone" else 10000
+        x = np.arange(len(lo), dtype=float)
+        for i in range(0, len(lo), xsize):
+            if i + xsize > len(lo):
+                break
+            fig_noise, ax_noise = plt.subplots(figsize=(12, 6))
+
+            curr_jumps = [np.array(jumps)[(np.array(jumps) >= i) & (np.array(jumps) < i + xsize)]]
+
+            ax_noise.vlines(curr_jumps, np.nanmin(lo[i:i+xsize]), np.nanmax(lo[i:i+xsize]),
+                            label='Detected Jumps', color='C4')
+            ax_noise.plot(x[i:i+xsize], lo[i:i+xsize], label='Low Current')
+            ax_noise.plot(x[i:i+xsize], hi[i:i+xsize], label='High Current')
+            ax_noise.plot(x[i:i+xsize], lo_avg[i:i+xsize], label='Moving Average')
+            ax_noise.plot(x[i:i+xsize], lo_std[i:i+xsize]+2.7, label='Moving Std Dev+2.7',
+                        ls='dashed')
+            
+            ax_noise.set_xlabel("Record Index")
+            ax_noise.set_ylabel("Low Current Temperature (K)")
+            ax_noise.set_title("Low Current Temperature and Moving Average")
+            ax_noise.legend()
+            fig_noise.savefig(f"data/output/estimate_noise/01_moving_average/{element}/{i}.png")
+            plt.close(fig_noise)
+
+    hi_std = moving_std(hi, n=n)
+
+    return jumps, lo_std, hi_std
+
+def debiase_hi(beta, hi, lo, low_temps, high_temps, lo_std, hi_std, element, side, channel):
+    """
+    Debiase the high temperature using the fitted Gaussian parameters.
+    
+    Parameters:
+    - beta: Parameters of the electronics model fitted to the self-heating vs temperature data.
+    - hi: Original high current temperatures.
+    - lo: Original low current temperatures.
+    - low_temps: Boolean array indicating which temperatures are below a threashold and only the
+    low current should be used for them.
+    - high_temps: Boolean array indicating which temperatures are above a threshold and only the
+    high current should be used for them.
+    - element: The element being analyzed (e.g., "ical", "xcal_cone", etc.).
+    - side: The side being analyzed ("a" or "b").
+    - channel: The channel being analyzed ("short", "medium", or "long").
+    """
 
     if g.VERBOSE > 1:
         print("Starting debiase_hi ---------------------------------------------------------------")
     
     # Vectorized debiasing - no copying needed
-    debiased_hi = hi - electronics_model(beta, hi)
+    debiased_hi = np.copy(lo)
+    debiased_hi[~low_temps & ~high_temps] = (hi[~low_temps & ~high_temps] -
+                                             oneoverT2(beta, hi[~low_temps & ~high_temps]))
 
     xsize = 1000 if element == "xcal_cone" else 10000
 
@@ -465,5 +468,28 @@ def debiase_hi(beta, hi, lo, element, side, channel):
             plt.close(fig_debias)
         print("Plotted check 1 -------------------------------------------------------------------")
 
-    return debiased_hi
-    return debiased_hi
+    temp_weight = (lo / lo_std**2 + debiased_hi / hi_std**2) / (1 / lo_std**2 + 1 / hi_std**2)
+
+    if g.VERBOSE > 2:
+        x = np.arange(len(hi))
+        for i in range(0, len(debiased_hi), xsize):
+            fig_debias, ax_debias = plt.subplots(figsize=(12, 6))
+            ax_debias.plot(x[i:i+xsize], lo[i:i+xsize], label='Low Current')
+            ax_debias.plot(x[i:i+xsize], hi[i:i+xsize],
+                    label='High Current', ls='None', marker='.', ms=4)
+            ax_debias.plot(x[i:i+xsize], temp_weight[i:i+xsize],
+                    label='Weighted Average', ls='None', marker='.', ms=4)
+            
+            ax_debias.set_ylabel("Temperature (K)")
+            ax_debias.set_xlabel("Record Index")
+            ax_debias.set_title(f"Temperatures measured for the {element_long_names[element]} "
+                                f"{side.upper()} side after debiasing and weighting")
+            ax_debias.legend()
+            fig_debias.savefig(f"data/output/debiase_hi/02_weighting/{i}.png")
+            plt.close(fig_debias)
+
+    return temp_weight
+
+if __name__ == "__main__":
+    array = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    print(moving_average(array, n=5))
