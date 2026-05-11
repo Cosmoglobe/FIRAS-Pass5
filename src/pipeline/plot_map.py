@@ -127,6 +127,8 @@ for channel in g.CHANNELS_PLOT:
             # mask the map
             m[mask] = hp.UNSEEN
 
+            # remove the previous figures
+            os.system(f"rm -rf {g.SAVE_PATH}maps/frequency_maps/{channel}_{mode}/{folder}/*.png")
             for freq in range(len(f_ghz[f"{channel}_{mode}"])):
                 if g.PNG:
                     max_amp = 200
@@ -159,31 +161,6 @@ for channel in g.CHANNELS_PLOT:
                 hpxmap_down = np.zeros((g.NPIX, len(f_ghz[f"{channel}_{mode}"])))
                 data_density_up = np.zeros(g.NPIX)
                 data_density_down = np.zeros(g.NPIX)
-
-                # if g.COORDINATES == "G":
-                #     for i in range(len(pix_gal)):
-                #         # if scan[i] == 1:
-                #         #     hpxmap_up[pix_gal[i]] += np.abs(
-                #         #         sky[f"{channel}_{mode}"][i]
-                #         #     )
-                #         #     data_density_up[pix_gal[i]] += 1
-                #         # elif scan[i] == 0:
-                #         #     hpxmap_down[pix_gal[i]] += np.abs(
-                #         #         sky[f"{channel}_{mode}"][i]
-                #         #     )
-                #         #     data_density_down[pix_gal[i]] += 1
-                # elif g.COORDINATES == "E":
-                #     for i in range(len(pix_ecl)):
-                #         if scan[i] == 1:
-                #             hpxmap_up[pix_ecl[i]] += np.abs(
-                #                 sky[f"{channel}_{mode}"][i]
-                #             )
-                #             data_density_up[pix_ecl[i]] += 1
-                #         elif scan[i] == 0:
-                #             hpxmap_down[pix_ecl[i]] += np.abs(
-                #                 sky[f"{channel}_{mode}"][i]
-                #             )
-                #             data_density_down[pix_ecl[i]] += 1
 
                 m_up = np.zeros((g.NPIX, len(f_ghz[f"{channel}_{mode}"])))
                 m_down = np.zeros((g.NPIX, len(f_ghz[f"{channel}_{mode}"])))
@@ -235,7 +212,6 @@ for channel in g.CHANNELS_PLOT:
                             m_down[:, freq],
                             overwrite=True,
                         )
-
 
 if g.JOINT:
     print("Plotting joint map")

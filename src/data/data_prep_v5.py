@@ -2,6 +2,7 @@
 So for this version we will keep each channel separate and use the midpoint_time to interpolate to get the temperatures.
 """
 
+import math
 import time
 
 import astropy.units as u
@@ -57,6 +58,24 @@ lvdt_stat_b = en_stat["lvdt_stat"][:, 1]
 en_analog = fdq_eng["en_analog"]
 grt = en_analog["grt"]
 grts, grt_times = get_data()
+
+if g.VERBOSE == -1:
+    print("Plotting raw temperatures for all thermometers")
+    xsize = {"ical": 10000, "xcal_cone": 1000}
+    for element in ["ical"]:
+        for i in range(0, len(grts[f"a_hi_{element}"]), xsize[element]):        
+            fig, ax = plt.subplots(figsize=(10, 6))                
+            for side in ["a", "b"]:
+                for hilo in ["lo", "hi"]:
+                    ax.plot(grt_times[f"{side}_{hilo}_{element}"][i:i+xsize[element]],
+                            grts[f"{side}_{hilo}_{element}"][i:i+xsize[element]], label=f"{side}_{hilo}")
+            ax.set_xlabel("Time")
+            ax.set_ylabel("Temperature (K)")
+            ax.set_title(f"Raw GRT Temperatures Over Time - {element.upper()}")
+            ax.legend()
+            plt.savefig(f"{g.SAVE_PATH}/plots/thermometers/01_raw_temperatures/{element}_{i}.png")
+            plt.close(fig)
+
 interpolators = get_interp(grts, grt_times)
 
 group1 = en_analog["group1"]
@@ -71,6 +90,7 @@ mu_err = {}
 avg_temp = {}
 temp_err = {}
 temps = {}
+std_weight = {}
 low_temps = {}
 high_temps = {}
 elements = ["ical", "xcal_cone", "refhorn", "skyhorn"]
@@ -188,9 +208,10 @@ for channel, channel_i in g.CHANNELS.items():
     # Batch interpolate temperatures for all elements and sides
     print("Batch interpolating temperatures...")
     
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
     for element in elements:
+        if g.VERBOSE == -1 and element in ["ical", "xcal_cone"]:
+            nplots = math.ceil(len(grts[f"a_hi_{element}"]) / xsize[element])
+            fig_ax_pairs = [plt.subplots(figsize=(10, 6)) for _ in range(nplots)]
         for side in sides:
             thermometerid = elements.index(element) + sides.index(side) * 10
             print(f"Interpolating {element} temperatures for side {side.upper()} -----------------")
@@ -203,12 +224,28 @@ for channel, channel_i in g.CHANNELS.items():
                 temps[f"{side}_hi_{element}_{channel}"] = temps[f"{side}_hi_{element}_{channel}"][cal_mask[channel]]
                 temps[f"{side}_lo_{element}_{channel}"] = temps[f"{side}_lo_{element}_{channel}"][cal_mask[channel]]
 
+
+            if (element == "ical" or element == "xcal_cone") and channel == "rh" and g.VERBOSE == -1:
+                for i in range(0, len(temps[f"{side}_hi_{element}_{channel}"]), xsize[element]):
+                    if i + xsize[element] > len(temps[f"{side}_hi_{element}_{channel}"]):
+                        continue
+                    fig_ax_pairs[i//xsize[element]][1].plot(midpoint_time_s[channel][i:i+xsize[element]],
+                                                   temps[f"{side}_lo_{element}_{channel}"][i:i+xsize[element]],
+                                                   label=f"{side}_lo")
+                    fig_ax_pairs[i//xsize[element]][1].plot(midpoint_time_s[channel][i:i+xsize[element]],
+                                                   temps[f"{side}_hi_{element}_{channel}"][i:i+xsize[element]],
+                                                   label=f"{side}_hi")
+                    fig_ax_pairs[i//xsize[element]][1].set_xlabel("Time")
+                    fig_ax_pairs[i//xsize[element]][1].set_ylabel("Temperature (K)")
+                    fig_ax_pairs[i//xsize[element]][1].set_title(f"Interpolated Temperatures for {element.upper()} - RH")
+                    fig_ax_pairs[i//xsize[element]][1].legend()
+            
             low_temps[f"{side}_{element}_{channel}"] = temps[f"{side}_lo_{element}_{channel}"] <= low_bound
             high_temps[f"{side}_{element}_{channel}"] = temps[f"{side}_hi_{element}_{channel}"] >= high_bound
 
-            print(f"Dividing {side.upper()} side ICAL temperatures into plateaus to try to de-bias them")
-            plateau_masks = stats.divide_plateaus(temps[f"{side}_lo_{element}_{channel}"],
-                                                    channel, element, side, plateau_divides_cache)
+            print(f"Dividing {side.upper()} side {element.upper()} temperatures into plateaus to try to de-bias them")
+            plateau_masks = stats.divide_plateaus(temps[f"{side}_lo_{element}_{channel}"], channel,
+                                                  element, side, plateau_divides_cache)
 
             n_plateaus = len(plateau_masks)
             keyword = f"{side}_{element}_{channel}"
@@ -227,12 +264,11 @@ for channel, channel_i in g.CHANNELS.items():
                 mu_err[keyword][i] = output[1]
                 avg_temp[keyword][i] = output[2]
                 temp_err[keyword][i] = output[3]
-                
-                # Only add label for the first point of each element/side combination
-                label = f"{element} ({side.upper()})" if i == 0 else None
-                ax.errorbar(avg_temp[keyword][i], mu[keyword][i], xerr=temp_err[keyword][i],
-                            yerr=mu_err[keyword][i], fmt='o', color=f'C{thermometerid}',
-                            label=label, markersize=6, capsize=3)
+
+        if channel == "rh" and g.VERBOSE == -1 and (element == "ical" or element == "xcal_cone"):
+            for i in range(0, len(temps[f"{side}_hi_{element}_{channel}"]), xsize[element]):
+                fig_ax_pairs[i//xsize[element]][0].savefig(f"{g.SAVE_PATH}/plots/thermometers/02_interpolated/{element}_{i}.png")
+                plt.close(fig_ax_pairs[i//xsize[element]][0])
 
 # join the results for the same thermometer in all of the channels
 beta = {}
@@ -246,21 +282,95 @@ for element in elements:
                                                            temp_err_all, element, side)
         # print(f"Fitted self-heating for {element} {side.upper()}: beta={beta:.6f}")
 
+lo_plot, hi_plot = {}, {}
 for channel, channel_i in g.CHANNELS.items():
     for element in elements:
+        if g.VERBOSE == -1 and (element in ["ical", "xcal_cone"]):
+            nplots = math.ceil(len(temps[f"a_lo_ical_rh"]) / xsize[element])
+            fig_ax_pairs = [plt.subplots(figsize=(10, 6)) for _ in range(nplots)]
+
+            fig_ax_pairs_2 = [plt.subplots(figsize=(10, 6)) for _ in range(nplots)]
+            
+            y_lim = [[np.inf, -np.inf] for _ in range(nplots)]
+
         for side in sides:
-            jumps, lo_std, hi_std = stats.estimate_noise(temps[f"{side}_lo_{element}_{channel}"],
-                                                         temps[f"{side}_hi_{element}_{channel}"],
-                                                         element)
-            temps[f"{side}_{element}_{channel}"] = stats.debiase_hi(beta[f"{element}_{side}"],
+            lo_std, hi_std = stats.estimate_noise(temps[f"{side}_lo_{element}_{channel}"],
+                                                         element,
+                                                         temps[f"{side}_hi_{element}_{channel}"])
+            output = stats.debiase_hi(beta[f"{element}_{side}"],
                                                    temps[f"{side}_hi_{element}_{channel}"],
                                                    temps[f"{side}_lo_{element}_{channel}"],
                                                    low_temps[f"{side}_{element}_{channel}"],
                                                    high_temps[f"{side}_{element}_{channel}"],
                                                    lo_std, hi_std, element, side, channel)
+            if g.VERBOSE == -1:
+                (temps[f"{side}_{element}_{channel}"], std_weight[f"{side}_{element}_{channel}"],
+                 lo_plot[f"{side}_{element}_{channel}"], hi_plot[f"{side}_{element}_{channel}"]) = output
+                hi_plot[f"{side}_{element}_{channel}"][high_temps[f"{side}_{element}_{channel}"]] = np.nan
+            else:
+                (temps[f"{side}_{element}_{channel}"],
+                 std_weight[f"{side}_{element}_{channel}"]) = output
+            
+            if (element == "ical" or element == "xcal_cone") and channel == "rh" and g.VERBOSE == -1:
+                for i in range(0, len(temps[f"{side}_hi_{element}_{channel}"]), xsize[element]):
+                    if i + xsize[element] > len(temps[f"{side}_hi_{element}_{channel}"]):
+                        continue
+                    fig_ax_pairs[i//xsize[element]][1].plot(midpoint_time_s[channel][i:i+xsize[element]],
+                                                   lo_plot[f"{side}_{element}_{channel}"][i:i+xsize[element]],
+                                                   label=f"{side}_lo")
+                    fig_ax_pairs[i//xsize[element]][1].plot(midpoint_time_s[channel][i:i+xsize[element]],
+                                                   hi_plot[f"{side}_{element}_{channel}"][i:i+xsize[element]],
+                                                   label=f"{side}_hi_debiased")
+                    fig_ax_pairs[i//xsize[element]][1].set_xlabel("Time")
+                    fig_ax_pairs[i//xsize[element]][1].set_ylabel("Temperature (K)")
+                    fig_ax_pairs[i//xsize[element]][1].set_title(f"Debiased High Current Temperatures for {element.upper()} - RH")
+                    fig_ax_pairs[i//xsize[element]][1].legend()
 
-        all_data[f"{element}_{channel}"] = (temps[f"a_{element}_{channel}"] +
-                                            temps[f"b_{element}_{channel}"]) / 2.0
+                    color = "C0" if side == "a" else "C2"
+                    fig_ax_pairs_2[i//xsize[element]][1].plot(midpoint_time_s[channel][i:i+xsize[element]],
+                                                    temps[f"{side}_{element}_{channel}"][i:i+xsize[element]],
+                                                    label=f"{side}_combined", color=color)
+                    fig_ax_pairs_2[i//xsize[element]][1].set_xlabel("Time")
+                    fig_ax_pairs_2[i//xsize[element]][1].set_ylabel("Temperature (K)")
+                    fig_ax_pairs_2[i//xsize[element]][1].set_title(f"High/Low Current Combined Temperatures for {element.upper()} - RH")
+                    fig_ax_pairs_2[i//xsize[element]][1].legend()
+
+                    chunk = temps[f"{side}_{element}_{channel}"][i:i+xsize[element]]
+                    if chunk.size > 0:
+                        valid = chunk[np.isfinite(chunk)]
+                        if valid.size > 0:
+                            y_lim[i//xsize[element]][0] = min(y_lim[i//xsize[element]][0], np.min(valid))
+                            y_lim[i//xsize[element]][1] = max(y_lim[i//xsize[element]][1], np.max(valid))
+
+        if channel == "rh" and g.VERBOSE == -1 and (element == "ical" or element == "xcal_cone"):
+            for i in range(0, len(lo_plot), xsize[element]):
+                fig_ax_pairs[i//xsize[element]][0].savefig(f"{g.SAVE_PATH}/plots/thermometers/03_debiased/{element}_{i}.png")
+                plt.close(fig_ax_pairs[i//xsize[element]][0])
+
+                fig_ax_pairs_2[i//xsize[element]][0].savefig(f"{g.SAVE_PATH}/plots/thermometers/04_combined/{element}_{i}.png")    
+                plt.close(fig_ax_pairs_2[i//xsize[element]][0])
+
+        # weight each side by its standard deviation to get a final temperature estimate for each element
+        all_data[f"{element}_{channel}"] = stats.weighted_average(temps[f"a_{element}_{channel}"],
+                                                                  temps[f"b_{element}_{channel}"],
+                                                                  std_weight[f"a_{element}_{channel}"],
+                                                                  std_weight[f"b_{element}_{channel}"])
+        
+        if g.VERBOSE == -1 and (element == "ical" or element == "xcal_cone") and channel == "rh":
+            for i in range(0, len(all_data[f"{element}_{channel}"]), xsize[element]):
+                if i + xsize[element] > len(all_data[f"{element}_{channel}"]):
+                    continue
+                fig, ax = plt.subplots(figsize=(10, 6))
+                ax.plot(midpoint_time_s[channel][i:i+xsize[element]],
+                        all_data[f"{element}_{channel}"][i:i+xsize[element]])
+                ax.set_xlabel("Time")
+                ax.set_ylabel("Temperature (K)")
+                ax.set_title(f"Final Combined Temperatures for {element.upper()} - RH")
+                if np.isfinite(y_lim[i//xsize[element]][0]) and np.isfinite(y_lim[i//xsize[element]][1]):
+                    ax.set_ylim(y_lim[i//xsize[element]])
+                plt.savefig(f"{g.SAVE_PATH}/plots/thermometers/05_final_combined/{element}_{i}.png")
+                plt.close(fig)
+
 
         if element == "xcal_cone":
             cal_data[f"{element}_{channel}"] = all_data[f"{element}_{channel}"]
@@ -271,41 +381,30 @@ for channel, channel_i in g.CHANNELS.items():
 
     temps[f"a_lo_dihedral"] = interpolators[f"a_lo_dihedral"](midpoint_time_s[channel])
     temps[f"b_lo_dihedral"] = interpolators[f"b_lo_dihedral"](midpoint_time_s[channel])
-    all_data[f"dihedral_{channel}"] = (temps[f"a_lo_dihedral"] + temps[f"b_lo_dihedral"]) * 0.5
+    std_weight[f"a_lo_dihedral"] = stats.estimate_noise(temps[f"a_lo_dihedral"], "dihedral")
+    std_weight[f"b_lo_dihedral"] = stats.estimate_noise(temps[f"b_lo_dihedral"], "dihedral")
+    all_data[f"dihedral_{channel}"] = stats.weighted_average(temps[f"a_lo_dihedral"],
+                                                             temps[f"b_lo_dihedral"],
+                                                             std_weight[f"a_lo_dihedral"],
+                                                             std_weight[f"b_lo_dihedral"])
 
+    # TODO: finish the weights of the sides down here
     temps[f"a_lo_collimator"] = interpolators[f"a_lo_collimator"](midpoint_time_s[channel])
     all_data[f"collimator_{channel}"] = temps[f"a_lo_collimator"]
-    plt.plot(midpoint_time_s[channel], temps[f"a_lo_collimator"], label="a_lo_collimator")
-    plt.savefig(f"data/output/temperatures/collimator/{channel}", dpi=150)
-    plt.close()
 
     temps[f"a_lo_mirror"] = interpolators[f"a_lo_mirror"](midpoint_time_s[channel])
     temps[f"b_lo_mirror"] = interpolators[f"b_lo_mirror"](midpoint_time_s[channel])
-    # check for nans
-    if np.isnan(temps[f"a_lo_mirror"]).any() or np.isnan(temps[f"b_lo_mirror"]).any():
-        print(f"Warning: NaN values found in mirror temperatures for channel {channel.upper()}.")
-        quit()
-    # plot to double check there is nothing wrong with these - DEBUG
-    plt.plot(midpoint_time_s[channel], temps[f"a_lo_mirror"], label="a_lo_mirror")
-    plt.plot(midpoint_time_s[channel], temps[f"b_lo_mirror"], label="b_lo_mirror")
-    plt.savefig(f"data/output/temperatures/mirror/{channel}", dpi=150)
-    plt.close()
-    print("Plotted mirror temperatures for debugging - check the plots to make sure there are no issues.")
+    std_weight[f"a_lo_mirror"] = stats.estimate_noise(temps[f"a_lo_mirror"], "mirror")
+    std_weight[f"b_lo_mirror"] = stats.estimate_noise(temps[f"b_lo_mirror"], "mirror")
     
-    all_data[f"mirror_{channel}"] = (temps[f"a_lo_mirror"] + temps[f"b_lo_mirror"]) * 0.5
+    all_data[f"mirror_{channel}"] = stats.weighted_average(temps[f"a_lo_mirror"],
+                                                            temps[f"b_lo_mirror"],
+                                                            std_weight[f"a_lo_mirror"],
+                                                            std_weight[f"b_lo_mirror"])
 
     for element in ["dihedral", "collimator", "mirror"]:
         cal_data[f"{element}_{channel}"] = all_data[f"{element}_{channel}"][cal_mask[channel]]
         sky_data[f"{element}_{channel}"] = all_data[f"{element}_{channel}"][sky_mask[channel]]
-
-    # Finalize and save the plot with all points
-    ax.set_xlabel("Average High Current Temperature (K)")
-    ax.set_ylabel("Fitted Gaussian Mean of High-Low Difference (K)")
-    ax.set_title(f"Self-Heating vs Temperature for All Elements - Channel {channel.upper()}")
-    ax.legend()
-    fig.tight_layout()
-    fig.savefig(f'data/output/all_points_{channel}.png', dpi=150)
-    plt.close(fig)
 
     (
         earth_limb,
