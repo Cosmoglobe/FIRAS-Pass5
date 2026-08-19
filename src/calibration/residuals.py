@@ -1,4 +1,25 @@
+"""
+Forward model the calibration interferograms from the measured temperatures and compare
+against the real ones, for the published calibration model and for the emissivities
+fitted by `fit_otf` side by side.
+
+The model is the one `fit_otf` fits:
+
+    Y = ETF * Bol * FFT[ OTF * P(T_xcal) + sum_{i>0} E_i * P(T_i) ]
+
+over XCAL, ICAL, dihedral, refhorn, skyhorn, collimator and the bolometer.  Every
+emitter carries its own emissivity and none are dropped: FIRAS is differential and the
+emissivities sum to zero, so XCAL and ICAL cancel to well under a percent and the terms
+that look negligible are a few to ten per cent of what is left.
+
+Each model is used with its own bolometer time constant.  The published emissivities go
+with the published tau; the fitted ones only make sense with the tau scale they were
+fitted against, which `fit_otf` writes alongside them, because the emissivities absorb
+whatever the response function got wrong.
+"""
+
 import argparse
+import os
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -6,16 +27,22 @@ from astropy.io import fits
 
 import globals as g
 import utils.my_utils as utils
-from calibration import bolometer
 from pipeline import ifg_spec
-from simulations.main import generate_ifg
+from simulations.main import generate_ifg, safe_divide
 from utils.config import gen_nyquistl
+
+# The emitters, in the order the emissivity columns are built below.
+LABELS = ["XCAL", "ICAL", "Dihedral", "Refhorn", "Skyhorn", "Collimator", "Bolometer"]
+
+# How each model is drawn, so the two are told apart on every panel.
+STYLE = {"published": "tab:blue", "fitted": "tab:red"}
 
 # argparse add-on to filenames and titles
 parser = argparse.ArgumentParser(description="Process some calibration data.")
-parser.add_argument(
-    "--suffix", type=str, default="", help="Suffix to add to filenames and titles"
-)
+parser.add_argument("--suffix", type=str, default="", help="Suffix to add to filenames and titles")
+parser.add_argument("--fit-dir", default="calibration/output", help="Where fit_otf wrote its "
+                    "results. If they are missing, only the published model is used.")
+parser.add_argument("--index", type=int, default=1704, help="Which interferogram to plot.")
 args = parser.parse_args()
 
 if args.suffix != "":
@@ -25,40 +52,40 @@ else:
 
 # suffix = "_otf_3rddeg_ical_2nddeg"
 
-fnyq = gen_nyquistl(
-    "../reference/fex_samprate.txt",
-    "../reference/fex_nyquist.txt",
-    "int",
-)
+fnyq = gen_nyquistl("../reference/fex_samprate.txt", "../reference/fex_nyquist.txt", "int")
 
 # set all text in figures bigger
-plt.rcParams.update(
-    {
-        "font.size": 16,
-        "axes.titlesize": 18,
-        "axes.labelsize": 16,
-        "xtick.labelsize": 14,
-        "ytick.labelsize": 14,
-        "legend.fontsize": 14,
-        "figure.titlesize": 20,
-    }
-)
+plt.rcParams.update({"font.size": 16, "axes.titlesize": 18, "axes.labelsize": 16,
+                     "xtick.labelsize": 14, "ytick.labelsize": 14, "legend.fontsize": 14,
+                     "figure.titlesize": 20})
+
+ghz_to_icm = g.C / 1e7  # GHz to cm/s
+
+
+def add_wavenumber_axis(ax):
+    secax = ax.secondary_xaxis(
+        "top", functions=(lambda x: x / ghz_to_icm, lambda x: x * ghz_to_icm)
+    )
+    secax.set_xlabel("Wavenumber (cm⁻¹)")
+
 
 print("Loading calibration data...")
 for channel in g.CHANNELS:
     data = np.load(f"{g.PREPROCESSED_DATA_PATH}cal.npz")
 
-    mtm_length = data["mtm_length"][:]
-    mtm_speed = data["mtm_speed"][:]
+    # cal.npz stores one column per channel, suffixed with the channel name.
+    mtm_length = data[f"mtm_length_{channel}"][:]
+    mtm_speed = data[f"mtm_speed_{channel}"][:]
 
     for mode in g.MODES:
         if channel[1] == "h" and mode == "lf":
             continue
         print(f"Simulating IFGs for {channel.upper()} {mode.upper()}...")
+        out_dir = f"calibration/output/checks/{channel}_{mode}"
+        os.makedirs(out_dir, exist_ok=True)
 
-        fits_data = fits.open(
-            f"{g.PUB_MODEL}FIRAS_CALIBRATION_MODEL_{channel.upper()}{mode.upper()}.FITS"
-        )
+        fits_data = fits.open(f"{g.PUB_MODEL}FIRAS_CALIBRATION_MODEL_{channel.upper()}"
+                              f"{mode.upper()}.FITS")
         # apod = fits_data[1].data["APODIZAT"][0]
         apod = np.ones(512, dtype=np.float64)  # No apodization for now
 
@@ -73,942 +100,367 @@ for channel in g.CHANNELS:
 
         mode_filter = length_filter & speed_filter
 
-        xcal = data["xcal_cone"][mode_filter]  # TODO: update this
-        ical = data["ical"][mode_filter]  # - 1.5e-1  # applying -150 mK offset
-        dihedral = data["dihedral"][mode_filter]
-        refhorn = data["refhorn"][mode_filter]
-        skyhorn = data["skyhorn"][mode_filter]
-        collimator = data["collimator"][mode_filter]
-        bolometer = data["bolometer"][mode_filter]
-        temps = np.vstack(
-            [xcal, ical, dihedral, refhorn, skyhorn, collimator, bolometer]
-        )
+        xcal = data[f"xcal_cone_{channel}"][mode_filter]  # TODO: update this
+        ical = data[f"ical_{channel}"][mode_filter]  # - 1.5e-1  # -150 mK offset
+        dihedral = data[f"dihedral_{channel}"][mode_filter]
+        refhorn = data[f"refhorn_{channel}"][mode_filter]
+        skyhorn = data[f"skyhorn_{channel}"][mode_filter]
+        collimator = data[f"collimator_{channel}"][mode_filter]
+        # one bolometer per channel: this channel's own detector, not the other three
+        bolometer = data[f"bolometer_{channel}"][mode_filter]
+        temps = np.vstack([xcal, ical, dihedral, refhorn, skyhorn, collimator, bolometer])
 
-        adds_per_group = data["adds_per_group"][mode_filter]
-        sweeps = data["sweeps"][mode_filter]
-        bol_cmd_bias = data["bol_cmd_bias"][mode_filter]
-        bol_volt = data["bol_volt"][mode_filter]
-        gain = data["gain"][mode_filter]
+        adds_per_group = data[f"adds_per_group_{channel}"][mode_filter]
+        sweeps = data[f"sweeps_{channel}"][mode_filter]
+        bol_cmd_bias = data[f"bol_cmd_bias_{channel}"][mode_filter]
+        bol_volt = data[f"bol_volt_{channel}"][mode_filter]
+        gain = data[f"gain_{channel}"][mode_filter]
 
-        original_ifgs = data[f"ifg"][mode_filter]
+        original_ifgs = data[f"ifg_{channel}"][mode_filter]
 
         # stuff to process the original IFGs into spectra
         frec = 4 * (g.CHANNELS[channel] % 2) + g.MODES[mode]
 
-        otf = fits_data[1].data["RTRANSFE"][0] + 1j * fits_data[1].data["ITRANSFE"][0]
-        # print(f"shape of OTF: {otf.shape}")
-        # otf = otf[np.abs(otf) > 0]
-
         fnyq_icm = fnyq["icm"][frec]
-
-        processed_spectra = ifg_spec.ifg_to_spec(
-            original_ifgs,
-            channel=channel,
-            mode=mode,
-            adds_per_group=adds_per_group,
-            sweeps=sweeps,
-            bol_cmd_bias=bol_cmd_bias / 25.5,
-            bol_volt=bol_volt,
-            gain=gain,
-            fnyq_icm=fnyq_icm,
-            otf=otf,
-            Tbol=temps[6],
-            apod=apod,
-        )
 
         cutoff = 5 if mode[1] == "s" else 7
 
         f_ghz = utils.generate_frequencies(channel, mode, 257)
 
-        bb_xcal = utils.planck(f_ghz, xcal)
-        bb_ical = utils.planck(f_ghz, ical)
-        bb_dihedral = utils.planck(f_ghz, dihedral)
-        bb_refhorn = utils.planck(f_ghz, refhorn)
-        bb_skyhorn = utils.planck(f_ghz, skyhorn)
-        bb_collimator = utils.planck(f_ghz, collimator)
-        bb_bolometer = utils.planck(f_ghz, bolometer)
-        length = len(otf)
-        (
-            emiss_ical,
-            emiss_dihedral,
-            emiss_refhorn,
-            emiss_skyhorn,
-            emiss_bolometer,
-            emiss_collimator,
-        ) = np.zeros((6, 257), dtype=np.complex128)
+        length = len(fits_data[1].data["RTRANSFE"][0])
 
-        otf_save = otf
-        otf = np.zeros(257, dtype=np.complex128)
-        otf[cutoff : cutoff + length] = otf_save
+        bb = [utils.planck(f_ghz, temps[i]) for i in range(len(LABELS))]
 
-        # fit 1st degree polynomial to otf
-        # otf_fit = np.polyfit(f_ghz, otf, 3)
-        # otf = np.polyval(otf_fit, f_ghz)
-        # otf = np.mean(otf[otf != 0])
+        def published_column(name, fits_data=fits_data, cutoff=cutoff, length=length):
+            """One published emissivity column, zero-padded to the full spectrum."""
+            column = np.zeros(257, dtype=np.complex128)
+            column[cutoff : cutoff + length] = (fits_data[1].data[f"R{name}"][0] + 1j *
+                                                fits_data[1].data[f"I{name}"][0])
+            return column
 
-        # # otf = np.ones(257, dtype=np.complex128) * 0.01
+        # Every emitter carries its own emissivity. None of these may be dropped: FIRAS
+        # is differential and the emissivities sum to zero, so the XCAL and ICAL terms
+        # cancel to well under a percent and what is left -- the horns, the collimator --
+        # is a few to ten per cent of the surviving signal, not a negligible correction.
+        emissivities = {
+            "published": np.column_stack([
+                published_column(name) for name in
+                ["TRANSFE", "ICAL", "DIHEDRA", "REFHORN", "SKYHORN", "STRUCTU", "BOLOMET"]
+            ])
+        }
+        # The published emissivities go with the published time constant.
+        tau_scales = {"published": 1.0}
 
-        emiss_ical[cutoff : cutoff + length] = (
-            fits_data[1].data["RICAL"][0] + 1j * fits_data[1].data["IICAL"][0]
-        )
-        # fit 1st degree polynomial to emiss_ical
-        # emiss_ical_fit = np.polyfit(f_ghz, emiss_ical, 2)
-        # emiss_ical = np.polyval(emiss_ical_fit, f_ghz)
-        # # emiss_ical = np.mean(emiss_ical[emiss_ical != 0])
-        # # emiss_ical = np.ones(257, dtype=np.complex128) * -0.0096
-        emiss_dihedral[cutoff : cutoff + length] = (
-            fits_data[1].data["RDIHEDRA"][0] + 1j * fits_data[1].data["IDIHEDRA"][0]
-        )
-        emiss_dihedral = np.mean(emiss_dihedral[emiss_dihedral != 0]) * np.zeros(
-            257, dtype=np.complex128
-        )
-        emiss_refhorn[cutoff : cutoff + length] = (
-            fits_data[1].data["RREFHORN"][0] + 1j * fits_data[1].data["IREFHORN"][0]
-        )
-        emiss_refhorn = np.mean(emiss_refhorn[emiss_refhorn != 0]) * np.zeros(
-            257, dtype=np.complex128
-        )
-        emiss_skyhorn[cutoff : cutoff + length] = (
-            fits_data[1].data["RSKYHORN"][0] + 1j * fits_data[1].data["ISKYHORN"][0]
-        )
-        emiss_skyhorn = np.mean(emiss_skyhorn[emiss_skyhorn != 0]) * np.zeros(
-            257, dtype=np.complex128
-        )
-        emiss_collimator[cutoff : cutoff + length] = (
-            fits_data[1].data["RSTRUCTU"][0] + 1j * fits_data[1].data["ISTRUCTU"][0]
-        )
-        emiss_collimator = np.mean(emiss_collimator[emiss_collimator != 0]) * np.zeros(
-            257, dtype=np.complex128
-        )
-        emiss_bolometer[cutoff : cutoff + length] = (
-            fits_data[1].data["RBOLOMET"][0] + 1j * fits_data[1].data["IBOLOMET"][0]
-        )
-        emiss_bolometer = np.mean(emiss_bolometer[emiss_bolometer != 0]) * np.zeros(
-            257, dtype=np.complex128
-        )
+        fitted_path = f"{args.fit_dir}/fitted_emissivities_{channel}_{mode}.npy"
+        diagnostics_path = f"{args.fit_dir}/fit_diagnostics_{channel}_{mode}.npz"
+        if os.path.exists(fitted_path) and os.path.exists(diagnostics_path):
+            fitted = np.load(fitted_path)
+            # fit_otf solves for the four bolometer assemblies separately. Their
+            # temperatures track each other to a few mK and only their sum enters the
+            # model here, so fold the four columns into the one bolometer term. Taking
+            # just this channel's column would drop three emitters and break the
+            # sum-to-zero the fit imposes, which is what makes the model differential.
+            emissivities["fitted"] = np.column_stack(
+                [fitted[:, i] for i in range(6)] + [fitted[:, 6:].sum(axis=1)]
+            )
+            # The fitted emissivities are only consistent with a bolometer response
+            # built from tau_scale * tau, so the two have to travel together.
+            tau_scales["fitted"] = float(np.load(diagnostics_path)["tau_scale"])
+            print(f"  fitted emissivities from {fitted_path}, "
+                  f"tau_scale = {tau_scales['fitted']:.4f}")
+        else:
+            print(f"  no fitted emissivities at {fitted_path}; published model only")
 
-        # open our generated emissivities
-        # data = np.load(f"calibration/output/fitted_emissivities_{channel}_{mode}.npy")
+        n = args.index
+        if not 0 <= n < original_ifgs.shape[0]:
+            print(f"  --index {n} outside the {original_ifgs.shape[0]} records; skipping")
+            continue
 
-        print(data)
+        # Everything each model predicts, keyed by model name.
+        results = {}
+        for name, E in emissivities.items():
+            otf = E[:, 0]
+            tau_scale = tau_scales[name]
 
-        # print(f"OTF mean: {otf:.6f}")
-        # print(f"Emiss ICAL mean: {emiss_ical:.6f}")
-        # print(f"Emiss Dihedral mean: {emiss_dihedral:.6f}")
-        # print(f"Emiss Refhorn mean: {emiss_refhorn:.6f}")
-        # print(f"Emiss Skyhorn mean: {emiss_skyhorn:.6f}")
-        # print(f"Emiss Collimator mean: {emiss_collimator:.6f}")
-        # print(f"Emiss Bolometer mean: {emiss_bolometer:.6f}")
+            processed_spectra = ifg_spec.ifg_to_spec(original_ifgs, channel=channel, mode=mode,
+                                                     adds_per_group=adds_per_group, sweeps=sweeps,
+                                                     bol_cmd_bias=bol_cmd_bias / 25.5,
+                                                     bol_volt=bol_volt, gain=gain,
+                                                     fnyq_icm=fnyq_icm, otf=otf, Tbol=temps[6],
+                                                     apod=apod, tau_scale=tau_scale)
+
+            # Solve the model for each emitter in turn, given all the others. For the
+            # XCAL this is the pipeline's own calibration step,
+            #     S_xcal = D - sum_{i>0} E_i P(T_i) / OTF,
+            # and for any other emitter it is the same equation rearranged for P(T_i),
+            #     P(T_i) = (D - P(T_xcal)) OTF / E_i - sum_{j>0, j!=i} E_j P(T_j) / E_i,
+            # where D is the OTF-divided measured spectrum. Emitters with a zero
+            # emissivity cannot be solved for and come back NaN, not as a blow-up.
+            decomposed = {}
+            for i in range(len(LABELS)):
+                if i == 0:
+                    others = sum(E[:, j] * bb[j] for j in range(1, len(LABELS)))
+                    decomposed[i] = processed_spectra - safe_divide(others, otf)
+                else:
+                    others = sum(E[:, j] * bb[j] for j in range(1, len(LABELS)) if j != i)
+                    numerator = (processed_spectra - bb[0]) * otf - others
+                    with np.errstate(divide="ignore", invalid="ignore"):
+                        decomposed[i] = np.where(E[:, i] != 0, numerator / E[:, i], np.nan)
+
+            simulated_ifgs, simulated_spectra = generate_ifg(
+                channel=channel, mode=mode, temps=temps, apod=apod,
+                adds_per_group=adds_per_group, sweeps=sweeps, bol_cmd_bias=bol_cmd_bias,
+                bol_volt=bol_volt, gain=gain, emissivities=E, tau_scale=tau_scale)
+
+            # Move the XCAL residual from one side of the comparison to the other.
+            xcal_residuals = decomposed[0][n] - bb[0][n]
+            simulated_plus_noise = simulated_spectra[n] + xcal_residuals
+
+            # Only wanted for record n, so forward model that one record rather than
+            # tiling its spectrum across the whole selection.
+            one = slice(n, n + 1)
+            simulated_ifgs_corrected, _ = generate_ifg(
+                channel=channel, mode=mode, temps=temps[:, one], apod=apod,
+                adds_per_group=adds_per_group[one], sweeps=sweeps[one],
+                bol_cmd_bias=bol_cmd_bias[one], bol_volt=bol_volt[one], gain=gain[one],
+                emiss_xcal=otf, tau_scale=tau_scale,
+                total_spectra=np.nan_to_num(simulated_plus_noise, nan=0.0)[np.newaxis, :])
+
+            if channel[0] == "r":
+                simulated_ifgs = -simulated_ifgs
+                # simulated_ifgs_corrected = -simulated_ifgs_corrected
+
+            results[name] = {
+                "E": E, "otf": otf, "processed": processed_spectra,
+                "decomposed": decomposed, "simulated": simulated_spectra,
+                "ifgs": simulated_ifgs, "ifgs_corrected": simulated_ifgs_corrected,
+                "corrected": processed_spectra[n] - xcal_residuals,
+                "plus_noise": simulated_plus_noise,
+            }
+
+        caption = (f"Temps: XCAL={xcal[n]:.2f}, ICAL={ical[n]:.2f}, dihed={dihedral[n]:.2f}, "
+                   f"refhorn={refhorn[n]:.2f}, skyhorn={skyhorn[n]:.2f}, "
+                   f"collimator={collimator[n]:.2f}, bolometer={bolometer[n]:.2f}")
 
         # plot emissivities
         fig, ax = plt.subplots(4, 2, figsize=(15, 20), sharex=True, sharey=True)
         fig.suptitle(f"{channel.upper()} {mode.upper()} Emissivities")
-        ax.flatten()[1].plot(f_ghz, otf.real, label="Real")
-        ax.flatten()[1].plot(f_ghz, otf.imag, label="Imag")
-        ax.flatten()[1].set_title("OTF")
-        ax.flatten()[1].legend()
-
-        ax.flatten()[2].plot(f_ghz, emiss_ical.real, label="Real")
-        ax.flatten()[2].plot(f_ghz, emiss_ical.imag, label="Imag")
-        ax.flatten()[2].set_title("ICAL Emissivity")
-        ax.flatten()[2].legend()
-
-        ax.flatten()[3].plot(f_ghz, emiss_dihedral.real, label="Real")
-        ax.flatten()[3].plot(f_ghz, emiss_dihedral.imag, label="Imag")
-        ax.flatten()[3].set_title("Dihedral Emissivity")
-        ax.flatten()[3].legend()
-
-        ax.flatten()[4].plot(f_ghz, emiss_refhorn.real, label="Real")
-        ax.flatten()[4].plot(f_ghz, emiss_refhorn.imag, label="Imag")
-        ax.flatten()[4].set_title("Refhorn Emissivity")
-        ax.flatten()[4].legend()
-
-        ax.flatten()[5].plot(f_ghz, emiss_skyhorn.real, label="Real")
-        ax.flatten()[5].plot(f_ghz, emiss_skyhorn.imag, label="Imag")
-        ax.flatten()[5].set_title("Skyhorn Emissivity")
-        ax.flatten()[5].legend()
-
-        ax.flatten()[6].plot(f_ghz, emiss_collimator.real, label="Real")
-        ax.flatten()[6].plot(f_ghz, emiss_collimator.imag, label="Imag")
-        ax.flatten()[6].set_title("Collimator Emissivity")
-        ax.flatten()[6].legend()
-
-        ax.flatten()[7].plot(f_ghz, emiss_bolometer.real, label="Real")
-        ax.flatten()[7].plot(f_ghz, emiss_bolometer.imag, label="Imag")
-        ax.flatten()[7].set_title("Bolometer Emissivity")
-        ax.flatten()[7].legend()
-        plt.savefig(f"calibration/output/checks/{channel}_{mode}/emissivities.png")
+        for i, label in enumerate(LABELS):
+            axis = ax.flatten()[i + 1]
+            for name, result in results.items():
+                axis.plot(f_ghz, result["E"][:, i].real, color=STYLE[name],
+                          label=f"{name} (real)")
+                axis.plot(f_ghz, result["E"][:, i].imag, color=STYLE[name], linestyle="--",
+                          label=f"{name} (imag)")
+            axis.set_title("OTF" if i == 0 else f"{label} Emissivity")
+            axis.legend(fontsize="x-small")
+        fig.tight_layout()
+        plt.savefig(f"{out_dir}/emissivities{suffix}.png", bbox_inches="tight")
+        plt.close()
 
         # same but all divided by otf
         fig, ax = plt.subplots(3, 2, figsize=(15, 20), sharex=True, sharey=True)
         fig.suptitle(f"{channel.upper()} {mode.upper()} Emissivities / OTF")
-
-        ax.flatten()[0].plot(
-            f_ghz,
-            emiss_ical.real / otf.real,
-            label="Real",
-        )
-        ax.flatten()[0].plot(
-            f_ghz,
-            emiss_ical.imag / otf.imag,
-            label="Imag",
-        )
-        ax.flatten()[0].set_title("ICAL")
-        ax.flatten()[0].legend()
-
-        ax.flatten()[1].plot(
-            f_ghz,
-            emiss_dihedral.real / otf.real,
-            label="Real",
-        )
-        ax.flatten()[1].plot(
-            f_ghz,
-            emiss_dihedral.imag / otf.imag,
-            label="Imag",
-        )
-        ax.flatten()[1].set_title("Dihedral")
-        ax.flatten()[1].legend()
-
-        ax.flatten()[2].plot(
-            f_ghz,
-            emiss_refhorn.real / otf.real,
-            label="Real",
-        )
-        ax.flatten()[2].plot(
-            f_ghz,
-            emiss_refhorn.imag / otf.imag,
-            label="Imag",
-        )
-        ax.flatten()[2].set_title("Refhorn")
-        ax.flatten()[2].legend()
-
-        ax.flatten()[3].plot(
-            f_ghz,
-            emiss_skyhorn.real / otf.real,
-            label="Real",
-        )
-        ax.flatten()[3].plot(
-            f_ghz,
-            emiss_skyhorn.imag / otf.imag,
-            label="Imag",
-        )
-        ax.flatten()[3].set_title("Skyhorn")
-        ax.flatten()[3].legend()
-
-        ax.flatten()[4].plot(
-            f_ghz,
-            emiss_collimator.real / otf.real,
-            label="Real",
-        )
-        ax.flatten()[4].plot(
-            f_ghz,
-            emiss_collimator.imag / otf.imag,
-            label="Imag",
-        )
-        ax.flatten()[4].set_title("Collimator")
-        ax.flatten()[4].legend()
-
-        ax.flatten()[5].plot(
-            f_ghz,
-            emiss_bolometer.real / otf.real,
-            label="Real",
-        )
-        ax.flatten()[5].plot(
-            f_ghz,
-            emiss_bolometer.imag / otf.imag,
-            label="Imag",
-        )
-        ax.flatten()[5].set_title("Bolometer")
-        ax.flatten()[5].legend()
-        plt.savefig(
-            f"calibration/output/checks/{channel}_{mode}/emissivities_div_otf.png"
-        )
-
-        xcal_spectra_processed = (
-            processed_spectra
-            - (
-                bb_ical * emiss_ical
-                + bb_dihedral * emiss_dihedral
-                + bb_refhorn * emiss_refhorn
-                + bb_skyhorn * emiss_skyhorn
-                + bb_collimator * emiss_collimator
-                + bb_bolometer * emiss_bolometer
-            )
-            / otf
-        )
-
-        ical_spectra_processed = (processed_spectra - bb_xcal) * otf / emiss_ical - (
-            bb_dihedral * emiss_dihedral
-            + bb_refhorn * emiss_refhorn
-            + bb_skyhorn * emiss_skyhorn
-            + bb_collimator * emiss_collimator
-            + bb_bolometer * emiss_bolometer
-        ) / emiss_ical
-
-        dihedral_spectra_processed = (
-            processed_spectra - bb_xcal
-        ) * otf / emiss_dihedral - (
-            bb_ical * emiss_ical
-            + bb_refhorn * emiss_refhorn
-            + bb_skyhorn * emiss_skyhorn
-            + bb_collimator * emiss_collimator
-            + bb_bolometer * emiss_bolometer
-        ) / emiss_dihedral
-
-        refhorn_spectra_processed = (
-            processed_spectra - bb_xcal
-        ) * otf / emiss_refhorn - (
-            bb_ical * emiss_ical
-            + bb_dihedral * emiss_dihedral
-            + bb_skyhorn * emiss_skyhorn
-            + bb_collimator * emiss_collimator
-            + bb_bolometer * emiss_bolometer
-        ) / emiss_refhorn
-
-        skyhorn_spectra_processed = (
-            processed_spectra - bb_xcal
-        ) * otf / emiss_skyhorn - (
-            bb_ical * emiss_ical
-            + bb_dihedral * emiss_dihedral
-            + bb_refhorn * emiss_refhorn
-            + bb_collimator * emiss_collimator
-            + bb_bolometer * emiss_bolometer
-        ) / emiss_skyhorn
-
-        collimator_spectra_processed = (
-            processed_spectra - bb_xcal
-        ) * otf / emiss_collimator - (
-            bb_ical * emiss_ical
-            + bb_dihedral * emiss_dihedral
-            + bb_refhorn * emiss_refhorn
-            + bb_skyhorn * emiss_skyhorn
-            + bb_bolometer * emiss_bolometer
-        ) / emiss_collimator
-
-        bolometer_spectra_processed = (
-            processed_spectra - bb_xcal
-        ) * otf / emiss_bolometer - (
-            bb_ical * emiss_ical
-            + bb_dihedral * emiss_dihedral
-            + bb_refhorn * emiss_refhorn
-            + bb_skyhorn * emiss_skyhorn
-            + bb_collimator * emiss_collimator
-        ) / emiss_bolometer
-
-        simulated_ifgs, simulated_spectra = generate_ifg(
-            channel=channel,
-            mode=mode,
-            temps=temps,
-            apod=apod,
-            adds_per_group=adds_per_group,
-            sweeps=sweeps,
-            bol_cmd_bias=bol_cmd_bias,
-            bol_volt=bol_volt,
-            gain=gain,
-            emiss_xcal=otf,
-            emiss_ical=emiss_ical,
-            emiss_dihedral=emiss_dihedral,
-            emiss_refhorn=emiss_refhorn,
-            emiss_skyhorn=emiss_skyhorn,
-            emiss_collimator=emiss_collimator,
-            emiss_bolometer=emiss_bolometer,
-        )
-
-        # n = np.random.randint(0, simulated_spectra.shape[0])
-        # n = 1663
-        n = 1704
-        # n = 2091
+        for i, label in enumerate(LABELS[1:], start=1):
+            axis = ax.flatten()[i - 1]
+            for name, result in results.items():
+                ratio = safe_divide(result["E"][:, i], result["otf"])
+                axis.plot(f_ghz, ratio.real, color=STYLE[name], label=f"{name} (real)")
+                axis.plot(f_ghz, ratio.imag, color=STYLE[name], linestyle="--",
+                          label=f"{name} (imag)")
+            axis.set_title(label)
+            axis.legend(fontsize="x-small")
+        fig.tight_layout()
+        plt.savefig(f"{out_dir}/emissivities_div_otf{suffix}.png", bbox_inches="tight")
+        plt.close()
 
         fig, ax = plt.subplots(4, 2, figsize=(15, 20), sharex=True, sharey=False)
-        fig.suptitle(
-            f"{channel.upper()} {mode.upper()} Black Body Spectra {n}\nTemps: XCAL={xcal[n]:.2f}, ICAL={ical[n]:.2f}, dihed={dihedral[n]:.2f}, refhorn={refhorn[n]:.2f}, skyhorn={skyhorn[n]:.2f}, collimator={collimator[n]:.2f}, bolometer={bolometer[n]:.2f}"
-        )
+        fig.suptitle(f"{channel.upper()} {mode.upper()} Black Body Spectra {n}\n{caption}")
+        add_wavenumber_axis(ax.flatten()[0])
+        add_wavenumber_axis(ax.flatten()[1])
 
-        # Add secondary x-axis to top subplot showing wavenumber
-        ghz_to_icm = g.C / 1e7  # GHz to cm/s
-        secax = ax.flatten()[0].secondary_xaxis(
-            "top",
-            functions=(lambda x: x / ghz_to_icm, lambda x: x * ghz_to_icm),
-        )
-        secax.set_xlabel("Wavenumber (cm⁻¹)")
-        secax = ax.flatten()[1].secondary_xaxis(
-            "top", functions=(lambda x: x / ghz_to_icm, lambda x: x * ghz_to_icm)
-        )
-        secax.set_xlabel("Wavenumber (cm⁻¹)")
-
-        ax.flatten()[0].plot(
-            f_ghz,
-            # np.abs(processed_spectra[n]),
-            processed_spectra[n],
-            label="Original Processed",
-        )
-        # ax.flatten()[0].plot(f_ghz, np.abs(simulated_spectra[n]), label="Sum of BBs")
-        ax.flatten()[0].plot(
-            f_ghz,
-            simulated_spectra[n],
-            label="Sum of BBs",
-        )
-        ax.flatten()[0].set_title(f"Processed Spectra")
+        for name, result in results.items():
+            ax.flatten()[0].plot(f_ghz, result["processed"][n], color=STYLE[name],
+                                 label=f"{name} processed")
+            ax.flatten()[0].plot(f_ghz, result["simulated"][n], color=STYLE[name],
+                                 linestyle="--", label=f"{name} sum of BBs")
+        ax.flatten()[0].set_title("Processed Spectra")
         ax.flatten()[0].set_ylabel("MJy/sr")
-        ax.flatten()[0].legend()
+        ax.flatten()[0].legend(fontsize="x-small")
 
-        ax.flatten()[1].plot(
-            f_ghz,
-            # np.abs(xcal_spectra_processed[n]),
-            xcal_spectra_processed[n],
-            label="Original Processed",
-        )
-        ax.flatten()[1].plot(
-            f_ghz,
-            bb_xcal[n],
-            label="Black Body",
-        )
-        ax.flatten()[1].set_title(f"XCAL Spectra")
-        ax.flatten()[1].legend()
-
-        ax.flatten()[2].plot(
-            f_ghz,
-            # np.abs(ical_spectra_processed[n]),
-            ical_spectra_processed[n],
-            label="Original Processed",
-        )
-        ax.flatten()[2].plot(f_ghz, bb_ical[n], label="Black Body")
-        ax.flatten()[2].set_title(f"ICAL Spectra")
-        ax.flatten()[2].set_ylabel("MJy/sr")
-        ax.flatten()[2].legend()
-
-        ax.flatten()[3].plot(
-            # f_ghz, np.abs(dihedral_spectra_processed[n]), label="Original Processed"
-            f_ghz,
-            dihedral_spectra_processed[n],
-            label="Original Processed",
-        )
-        ax.flatten()[3].plot(f_ghz, bb_dihedral[n], label="Black Body")
-        ax.flatten()[3].set_title(f"Dihedral Spectra")
-        ax.flatten()[3].legend()
-
-        ax.flatten()[4].plot(
-            # f_ghz, np.abs(refhorn_spectra_processed[n]), label="Original Processed"
-            f_ghz,
-            refhorn_spectra_processed[n],
-            label="Original Processed",
-        )
-        ax.flatten()[4].plot(f_ghz, bb_refhorn[n], label="Black Body")
-        ax.flatten()[4].set_title(f"Refhorn Spectra")
-        ax.flatten()[4].set_ylabel("MJy/sr")
-        ax.flatten()[4].legend()
-
-        ax.flatten()[5].plot(
-            # f_ghz, np.abs(skyhorn_spectra_processed[n]), label="Original Processed"
-            f_ghz,
-            skyhorn_spectra_processed[n],
-            label="Original Processed",
-        )
-        ax.flatten()[5].plot(f_ghz, bb_skyhorn[n], label="Black Body")
-        ax.flatten()[5].set_title(f"Skyhorn Spectra")
-        ax.flatten()[5].legend()
-
-        ax.flatten()[6].plot(
-            # f_ghz, np.abs(collimator_spectra_processed[n]), label="Original Processed"
-            f_ghz,
-            collimator_spectra_processed[n],
-            label="Original Processed",
-        )
-        ax.flatten()[6].plot(f_ghz, bb_collimator[n], label="Black Body")
-        ax.flatten()[6].set_title(f"Collimator Spectra")
+        for i, label in enumerate(LABELS):
+            axis = ax.flatten()[i + 1]
+            for name, result in results.items():
+                axis.plot(f_ghz, result["decomposed"][i][n], color=STYLE[name],
+                          label=f"{name} processed")
+            axis.plot(f_ghz, bb[i][n], color="black", linestyle="--", label="Black Body")
+            axis.set_title(f"{label} Spectra")
+            axis.legend(fontsize="x-small")
+            if i % 2 == 1:
+                axis.set_ylabel("MJy/sr")
         ax.flatten()[6].set_xlabel("Frequency (GHz)")
-        ax.flatten()[6].set_ylabel("MJy/sr")
-        ax.flatten()[6].legend()
-
-        ax.flatten()[7].plot(
-            # f_ghz, np.abs(bolometer_spectra_processed[n]), label="Original Processed"
-            f_ghz,
-            bolometer_spectra_processed[n],
-            label="Original Processed",
-        )
-        ax.flatten()[7].plot(f_ghz, bb_bolometer[n], label="Black Body")
-        ax.flatten()[7].set_title(f"Bolometer Spectra")
         ax.flatten()[7].set_xlabel("Frequency (GHz)")
-        ax.flatten()[7].legend()
-
         fig.tight_layout()
-
-        fig.savefig(
-            f"calibration/output/checks/{channel}_{mode}/{n}_01_bb_spectra{suffix}.png",
-            bbox_inches="tight",
-        )
+        fig.savefig(f"{out_dir}/{n}_01_bb_spectra{suffix}.png", bbox_inches="tight")
         plt.close()
 
         # same plot but with bb * emissivity / otf
         fig, ax = plt.subplots(4, 2, figsize=(15, 20), sharex=True, sharey=False)
-        fig.suptitle(
-            f"{channel.upper()} {mode.upper()} Black Body Spectra with Emissivities {n}\nTemps: XCAL={xcal[n]:.2f}, ICAL={ical[n]:.2f}, dihed={dihedral[n]:.2f}, refhorn={refhorn[n]:.2f}, skyhorn={skyhorn[n]:.2f}, collimator={collimator[n]:.2f}, bolometer={bolometer[n]:.2f}"
-        )
+        fig.suptitle(f"{channel.upper()} {mode.upper()} Black Body Spectra with "
+                     f"Emissivities {n}\n{caption}")
+        add_wavenumber_axis(ax.flatten()[0])
+        add_wavenumber_axis(ax.flatten()[1])
 
-        secax = ax.flatten()[0].secondary_xaxis(
-            "top",
-            functions=(lambda x: x / ghz_to_icm, lambda x: x * ghz_to_icm),
-        )
-        secax.set_xlabel("Wavenumber (cm⁻¹)")
-        secax = ax.flatten()[1].secondary_xaxis(
-            "top", functions=(lambda x: x / ghz_to_icm, lambda x: x * ghz_to_icm)
-        )
-        secax.set_xlabel("Wavenumber (cm⁻¹)")
-
-        ax.flatten()[0].plot(
-            f_ghz,
-            processed_spectra[n],
-            label="Original Processed",
-        )
-        ax.flatten()[0].plot(
-            f_ghz,
-            simulated_spectra[n],
-            label="Sum of BBs",
-        )
-        ax.flatten()[0].set_title(f"Processed Spectra")
+        for name, result in results.items():
+            ax.flatten()[0].plot(f_ghz, result["processed"][n], color=STYLE[name],
+                                 label=f"{name} processed")
+            ax.flatten()[0].plot(f_ghz, result["simulated"][n], color=STYLE[name],
+                                 linestyle="--", label=f"{name} sum of BBs")
+        ax.flatten()[0].set_title("Processed Spectra")
         ax.flatten()[0].set_ylabel("MJy/sr")
-        ax.flatten()[0].legend()
+        ax.flatten()[0].legend(fontsize="x-small")
 
-        ax.flatten()[1].plot(
-            f_ghz,
-            xcal_spectra_processed[n],
-            label="Original Processed",
-        )
-        ax.flatten()[1].plot(
-            f_ghz,
-            bb_xcal[n],
-            label="BB with Emissivity",
-        )
-        ax.flatten()[1].set_title(f"XCAL Spectra")
-        ax.flatten()[1].legend()
-
-        ax.flatten()[2].plot(
-            f_ghz,
-            ical_spectra_processed[n] * emiss_ical / otf,
-            label="Original Processed",
-        )
-        ax.flatten()[2].plot(
-            f_ghz,
-            bb_ical[n] * emiss_ical / otf,
-            label="BB with Emissivity",
-        )
-        ax.flatten()[2].set_title(f"ICAL Spectra")
-        ax.flatten()[2].set_ylabel("MJy/sr")
-        ax.flatten()[2].legend()
-
-        ax.flatten()[3].plot(
-            f_ghz,
-            dihedral_spectra_processed[n] * emiss_dihedral / otf,
-            label="Original Processed",
-        )
-        ax.flatten()[3].plot(
-            f_ghz,
-            bb_dihedral[n] * emiss_dihedral / otf,
-            label="BB with Emissivity",
-        )
-        ax.flatten()[3].set_title(f"Dihedral Spectra")
-        ax.flatten()[3].legend()
-
-        ax.flatten()[4].plot(
-            f_ghz,
-            refhorn_spectra_processed[n] * emiss_refhorn / otf,
-            label="Original Processed",
-        )
-        ax.flatten()[4].plot(
-            f_ghz,
-            bb_refhorn[n] * emiss_refhorn / otf,
-            label="BB with Emissivity",
-        )
-        ax.flatten()[4].set_title(f"Refhorn Spectra")
-        ax.flatten()[4].set_ylabel("MJy/sr")
-        ax.flatten()[4].legend()
-
-        ax.flatten()[5].plot(
-            f_ghz,
-            skyhorn_spectra_processed[n] * emiss_skyhorn / otf,
-            label="Original Processed",
-        )
-        ax.flatten()[5].plot(
-            f_ghz,
-            bb_skyhorn[n] * emiss_skyhorn / otf,
-            label="BB with Emissivity",
-        )
-        ax.flatten()[5].set_title(f"Skyhorn Spectra")
-        ax.flatten()[5].legend()
-
-        ax.flatten()[6].plot(
-            f_ghz,
-            collimator_spectra_processed[n] * emiss_collimator / otf,
-            label="Original Processed",
-        )
-        ax.flatten()[6].plot(
-            f_ghz,
-            bb_collimator[n] * emiss_collimator / otf,
-            label="BB with Emissivity",
-        )
-        ax.flatten()[6].set_title(f"Collimator Spectra")
+        for i, label in enumerate(LABELS):
+            axis = ax.flatten()[i + 1]
+            for name, result in results.items():
+                weight = 1.0 if i == 0 else safe_divide(result["E"][:, i], result["otf"])
+                axis.plot(f_ghz, result["decomposed"][i][n] * weight, color=STYLE[name],
+                          label=f"{name} processed")
+                axis.plot(f_ghz, bb[i][n] * weight, color=STYLE[name], linestyle="--",
+                          label=f"{name} BB with emissivity")
+            axis.set_title(f"{label} Spectra")
+            axis.legend(fontsize="x-small")
+            if i % 2 == 1:
+                axis.set_ylabel("MJy/sr")
         ax.flatten()[6].set_xlabel("Frequency (GHz)")
-        ax.flatten()[6].set_ylabel("MJy/sr")
-        ax.flatten()[6].legend()
-
-        ax.flatten()[7].plot(
-            f_ghz,
-            bolometer_spectra_processed[n] * emiss_bolometer / otf,
-            label="Original Processed",
-        )
-        ax.flatten()[7].plot(
-            f_ghz,
-            bb_bolometer[n] * emiss_bolometer / otf,
-            label="BB with Emissivity",
-        )
-        ax.flatten()[7].set_title(f"Bolometer Spectra")
         ax.flatten()[7].set_xlabel("Frequency (GHz)")
-        ax.flatten()[7].legend()
         fig.tight_layout()
-        plt.savefig(
-            f"calibration/output/checks/{channel}_{mode}/{n}_01b_bb_spectra_emissivities{suffix}.png",
-            bbox_inches="tight",
-        )
+        plt.savefig(f"{out_dir}/{n}_01b_bb_spectra_emissivities{suffix}.png",
+                    bbox_inches="tight")
         plt.close()
 
-        # plot the bb curves all together
-        fig, ax = plt.subplots(figsize=(10, 8))
-        fig.suptitle(
-            f"{channel.upper()} {mode.upper()} Black Body Spectra Components {n}\nTemps: XCAL={xcal[n]:.2f}, ICAL={ical[n]:.2f}, dihed={dihedral[n]:.2f}, refhorn={refhorn[n]:.2f}, skyhorn={skyhorn[n]:.2f}, collimator={collimator[n]:.2f}, bolometer={bolometer[n]:.2f}"
-        )
-        ax.plot(f_ghz, bb_xcal[n], label="XCAL")
-        ax.plot(f_ghz, bb_ical[n] * emiss_ical / otf, label="ICAL")
-        ax.plot(f_ghz, bb_dihedral[n] * emiss_dihedral / otf, label="Dihedral")
-        ax.plot(f_ghz, bb_refhorn[n] * emiss_refhorn / otf, label="Refhorn")
-        ax.plot(f_ghz, bb_skyhorn[n] * emiss_skyhorn / otf, label="Skyhorn")
-        ax.plot(f_ghz, bb_collimator[n] * emiss_collimator / otf, label="Collimator")
-        ax.plot(f_ghz, bb_bolometer[n] * emiss_bolometer / otf, label="Bolometer")
-        ax.plot(
-            f_ghz,
-            simulated_spectra[n],
-            label="Sum of BBs",
-            linestyle="--",
-            color="black",
-        )
-        ax.set_xlabel("Frequency (GHz)")
-        ax.set_ylabel("MJy/sr")
-        ax.legend()
-        plt.savefig(
-            f"calibration/output/checks/{channel}_{mode}/{n}_01c_bb_spectra_components{suffix}.png",
-            bbox_inches="tight",
-        )
+        # plot the bb curves all together, one panel per model
+        fig, ax = plt.subplots(1, len(results), figsize=(9 * len(results), 8),
+                               squeeze=False, sharex=True)
+        fig.suptitle(f"{channel.upper()} {mode.upper()} Black Body Spectra Components {n}\n"
+                     f"{caption}")
+        for axis, (name, result) in zip(ax.flatten(), results.items()):
+            for i, label in enumerate(LABELS):
+                weight = 1.0 if i == 0 else safe_divide(result["E"][:, i], result["otf"])
+                axis.plot(f_ghz, bb[i][n] * weight, label=label)
+            axis.plot(f_ghz, result["simulated"][n], label="Sum of BBs", linestyle="--",
+                      color="black")
+            axis.set_title(name)
+            axis.set_xlabel("Frequency (GHz)")
+            axis.set_ylabel("MJy/sr")
+            axis.legend(fontsize="x-small")
+        fig.tight_layout()
+        plt.savefig(f"{out_dir}/{n}_01c_bb_spectra_components{suffix}.png",
+                    bbox_inches="tight")
+        plt.close()
 
         # plot residuals
         fig, ax = plt.subplots(4, 2, figsize=(15, 20), sharex=True, sharey=False)
-        fig.suptitle(
-            f"{channel.upper()} {mode.upper()} Residuals {n}\nTemps: XCAL={xcal[n]:.2f}, ICAL={ical[n]:.2f}, dihed={dihedral[n]:.2f}, refhorn={refhorn[n]:.2f}, skyhorn={skyhorn[n]:.2f}, collimator={collimator[n]:.2f}, bolometer={bolometer[n]:.2f}"
-        )
+        fig.suptitle(f"{channel.upper()} {mode.upper()} Residuals {n}\n{caption}")
+        add_wavenumber_axis(ax.flatten()[0])
+        add_wavenumber_axis(ax.flatten()[1])
 
-        secax = ax.flatten()[0].secondary_xaxis(
-            "top",
-            functions=(lambda x: x / ghz_to_icm, lambda x: x * ghz_to_icm),
-        )
-        secax.set_xlabel("Wavenumber (cm⁻¹)")
-        secax = ax.flatten()[1].secondary_xaxis(
-            "top", functions=(lambda x: x / ghz_to_icm, lambda x: x * ghz_to_icm)
-        )
-        secax.set_xlabel("Wavenumber (cm⁻¹)")
-
-        # ax.flatten()[0].plot(f_ghz, np.abs(processed_spectra[n] - simulated_spectra[n]))
-        ax.flatten()[0].plot(f_ghz, processed_spectra[n] - simulated_spectra[n])
-        ax.flatten()[0].set_title(f"Processed Spectra")
+        for name, result in results.items():
+            ax.flatten()[0].plot(f_ghz, result["processed"][n] - result["simulated"][n],
+                                 color=STYLE[name], label=name)
+        ax.flatten()[0].set_title("Processed Spectra")
         ax.flatten()[0].set_ylabel("MJy/sr")
+        ax.flatten()[0].legend(fontsize="x-small")
 
-        # ax.flatten()[1].plot(f_ghz, np.abs(xcal_spectra_processed[n] - bb_xcal[n]))
-        ax.flatten()[1].plot(f_ghz, xcal_spectra_processed[n] - bb_xcal[n])
-        ax.flatten()[1].set_title(f"XCAL Spectra")
-
-        # ax.flatten()[2].plot(f_ghz, np.abs(ical_spectra_processed[n] - bb_ical[n]))
-        ax.flatten()[2].plot(f_ghz, ical_spectra_processed[n] - bb_ical[n])
-        ax.flatten()[2].set_title(f"ICAL Spectra")
-        ax.flatten()[2].set_ylabel("MJy/sr")
-
-        ax.flatten()[3].plot(
-            # f_ghz, np.abs(dihedral_spectra_processed[n] - bb_dihedral[n])
-            f_ghz,
-            dihedral_spectra_processed[n] - bb_dihedral[n],
-        )
-        ax.flatten()[3].set_title(f"Dihedral Spectra")
-
-        ax.flatten()[4].plot(
-            # f_ghz, np.abs(refhorn_spectra_processed[n] - bb_refhorn[n])
-            f_ghz,
-            refhorn_spectra_processed[n] - bb_refhorn[n],
-        )
-        ax.flatten()[4].set_title(f"Refhorn Spectra")
-        ax.flatten()[4].set_ylabel("MJy/sr")
-
-        ax.flatten()[5].plot(
-            # f_ghz, np.abs(skyhorn_spectra_processed[n] - bb_skyhorn[n])
-            f_ghz,
-            skyhorn_spectra_processed[n] - bb_skyhorn[n],
-        )
-        ax.flatten()[5].set_title(f"Skyhorn Spectra")
-
-        ax.flatten()[6].plot(
-            # f_ghz, np.abs(collimator_spectra_processed[n] - bb_collimator[n])
-            f_ghz,
-            collimator_spectra_processed[n] - bb_collimator[n],
-        )
-        ax.flatten()[6].set_title(f"Collimator Spectra")
+        for i, label in enumerate(LABELS):
+            axis = ax.flatten()[i + 1]
+            for name, result in results.items():
+                axis.plot(f_ghz, result["decomposed"][i][n] - bb[i][n], color=STYLE[name],
+                          label=name)
+            axis.set_title(f"{label} Spectra")
+            axis.legend(fontsize="x-small")
+            if i % 2 == 1:
+                axis.set_ylabel("MJy/sr")
         ax.flatten()[6].set_xlabel("Frequency (GHz)")
-        ax.flatten()[6].set_ylabel("MJy/sr")
-
-        ax.flatten()[7].plot(
-            # f_ghz, np.abs(bolometer_spectra_processed[n] - bb_bolometer[n])
-            f_ghz,
-            bolometer_spectra_processed[n] - bb_bolometer[n],
-        )
-        ax.flatten()[7].set_title(f"Bolometer Spectra")
         ax.flatten()[7].set_xlabel("Frequency (GHz)")
-
         fig.tight_layout()
-
-        plt.savefig(
-            f"calibration/output/checks/{channel}_{mode}/{n}_02_residuals{suffix}.png",
-            bbox_inches="tight",
-        )
+        plt.savefig(f"{out_dir}/{n}_02_residuals{suffix}.png", bbox_inches="tight")
         plt.close()
 
-        xcal_residuals = xcal_spectra_processed[n] - bb_xcal[n]
-        spectra_corrected = processed_spectra[n] - xcal_residuals
-
-        simulated_plus_noise = simulated_spectra[n] + xcal_residuals
-
+        # the spectrum with the XCAL residual moved from one side to the other
         fig, ax = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
-        fig.suptitle(
-            f"{channel.upper()} {mode.upper()} Spectra {n}\nTemps: XCAL={xcal[n]:.2f}, ICAL={ical[n]:.2f}, dihed={dihedral[n]:.2f}, refhorn={refhorn[n]:.2f}, skyhorn={skyhorn[n]:.2f}, collimator={collimator[n]:.2f}, bolometer={bolometer[n]:.2f}"
-        )
+        fig.suptitle(f"{channel.upper()} {mode.upper()} Spectra {n}\n{caption}")
+        add_wavenumber_axis(ax[0])
 
-        secax = ax.flatten()[0].secondary_xaxis(
-            "top",
-            functions=(lambda x: x / ghz_to_icm, lambda x: x * ghz_to_icm),
-        )
-        secax.set_xlabel("Wavenumber (cm⁻¹)")
-
-        ax[0].plot(
-            f_ghz,
-            # np.abs(spectra_corrected),
-            spectra_corrected,
-            label="Processed spectrum corrected for XCAL noise",
-        )
-        ax[0].plot(
-            f_ghz,
-            # np.abs(simulated_spectra[n]),
-            simulated_spectra[n],
-            label="Simulated Spectra",
-            linestyle="--",
-        )
+        for name, result in results.items():
+            ax[0].plot(f_ghz, result["corrected"], color=STYLE[name],
+                       label=f"{name} processed, XCAL noise removed")
+            ax[0].plot(f_ghz, result["simulated"][n], color=STYLE[name], linestyle="--",
+                       label=f"{name} simulated")
+            ax[1].plot(f_ghz, result["plus_noise"], color=STYLE[name],
+                       label=f"{name} simulated plus XCAL noise")
+            ax[1].plot(f_ghz, result["processed"][n], color=STYLE[name], linestyle="--",
+                       label=f"{name} processed")
         ax[0].set_ylabel("MJy/sr")
-        ax[0].legend()
-
-        ax[1].plot(
-            f_ghz,
-            # np.abs(simulated_plus_noise),
-            simulated_plus_noise,
-            label="Simulated spectrum plus XCAL noise",
-        )
-        ax[1].plot(
-            f_ghz,
-            # np.abs(processed_spectra[n]),
-            processed_spectra[n],
-            label="Original Processed Spectra",
-            linestyle="--",
-        )
+        ax[0].legend(fontsize="x-small")
         ax[1].set_xlabel("Frequency (GHz)")
         ax[1].set_ylabel("MJy/sr")
-        ax[1].legend()
+        ax[1].legend(fontsize="x-small")
         fig.tight_layout()
-
-        plt.savefig(
-            f"calibration/output/checks/{channel}_{mode}/{n}_03_spectra_comparison{suffix}.png",
-            bbox_inches="tight",
-        )
+        plt.savefig(f"{out_dir}/{n}_03_spectra_comparison{suffix}.png", bbox_inches="tight")
         plt.close()
 
-        simulated_ifgs_corrected, _ = generate_ifg(
-            channel=channel,
-            mode=mode,
-            temps=temps,
-            apod=apod,
-            adds_per_group=adds_per_group,
-            sweeps=sweeps,
-            bol_cmd_bias=bol_cmd_bias,
-            bol_volt=bol_volt,
-            gain=gain,
-            total_spectra=np.nan_to_num(simulated_plus_noise, nan=0.0),
-        )
+        # interferogram space: original against each model, and the residuals
+        if mode == "lf":
+            scan_length = 7.07  # cm
+        else:
+            scan_length = 1.76  # cm
+        peak = g.PEAK_POSITIONS[f"{channel}_{mode}"]
+        original = original_ifgs[n, :] - np.median(original_ifgs[n, :])
 
-        if channel[0] == "r":
-            simulated_ifgs = -simulated_ifgs
-            # simulated_ifgs_corrected = -simulated_ifgs_corrected
-
-        for ifg in range(n, n + 1, 1):
-            print(f"Plotting IFG {ifg+1} for {channel.upper()} {mode.upper()}...")
-
-            # plot both and residuals
+        for tag, key, index, name in (
+            ("04_ifg_residuals", "ifgs", n, "Simulated IFG"),
+            ("05_ifg_residuals_corrected", "ifgs_corrected", 0, "Simulated Corrected IFG"),
+        ):
+            print(f"Plotting IFG {n} for {channel.upper()} {mode.upper()} ({tag})...")
             fig, ax = plt.subplots(4, 1, figsize=(10, 15), sharex=True, sharey=True)
-            fig.suptitle(
-                f"{channel.upper()} {mode.upper()} IFG {ifg}\nTemps: XCAL={xcal[ifg]:.2f}, ICAL={ical[ifg]:.2f}, dihed={dihedral[ifg]:.2f}, refhorn={refhorn[ifg]:.2f}, skyhorn={skyhorn[ifg]:.2f}, collimator={collimator[ifg]:.2f}, bolometer={bolometer[ifg]:.2f}"
-            )
-
-            if mode == "lf":
-                scan_length = 7.07  # cm
-            else:
-                scan_length = 1.76  # cm
+            fig.suptitle(f"{channel.upper()} {mode.upper()} IFG {n}\n{caption}")
 
             secax = ax[0].secondary_xaxis(
                 "top",
-                functions=(
-                    lambda x: x * scan_length / 512,
-                    lambda x: x * 512 / scan_length,
-                ),
+                functions=(lambda x: x * scan_length / 512, lambda x: x * 512 / scan_length),
             )
             secax.set_xlabel("Length (cm)")
 
-            ax[0].plot(original_ifgs[ifg, :] - np.median(original_ifgs[ifg, :]))
-            ax[0].axvline(
-                x=g.PEAK_POSITIONS[f"{channel}_{mode}"],
-                color="red",
-                linestyle="--",
-                label="Peak",
-            )
+            ax[0].plot(original, color="black")
             ax[0].set_title("Original IFG")
 
-            ax[1].plot(simulated_ifgs[ifg, :])
-            ax[1].axvline(
-                x=g.PEAK_POSITIONS[f"{channel}_{mode}"],
-                color="red",
-                linestyle="--",
-                label="Peak",
-            )
-            ax[1].set_title("Simulated IFG")
+            for model, result in results.items():
+                simulated = result[key][index, :]
+                ax[1].plot(simulated, color=STYLE[model], label=model)
+                ax[2].plot(simulated, color=STYLE[model], label=f"{model} {name.lower()}")
+                ax[3].plot(original - simulated, color=STYLE[model], label=model)
+            ax[1].set_title(name)
+            ax[1].legend(fontsize="x-small")
 
-            ax[2].plot(
-                original_ifgs[ifg, :] - np.median(original_ifgs[ifg, :]),
-                label="Original IFG",
-            )
-            ax[2].plot(simulated_ifgs[ifg, :], label="Simulated IFG")
-            ax[2].axvline(
-                x=g.PEAK_POSITIONS[f"{channel}_{mode}"],
-                color="red",
-                linestyle="--",
-                label="Peak",
-            )
-            ax[2].set_title("Original vs Simulated IFG")
-            ax[2].legend()
+            ax[2].plot(original, color="black", label="Original IFG")
+            ax[2].set_title(f"Original vs {name}")
+            ax[2].legend(fontsize="x-small")
 
-            ax[3].plot(
-                original_ifgs[ifg, :]
-                - np.median(original_ifgs[ifg, :])
-                - simulated_ifgs[ifg, :]
-            )
-            ax[3].plot(
-                [
-                    np.median(
-                        original_ifgs[ifg, :]
-                        - np.median(original_ifgs[ifg, :])
-                        - simulated_ifgs[ifg, :]
-                    )
-                ]
-                * 512
-            )
-            ax[3].axvline(
-                x=g.PEAK_POSITIONS[f"{channel}_{mode}"],
-                color="red",
-                linestyle="--",
-                label="Peak",
-            )
-            ax[3].set_title("Residuals (original - simulated)")
+            ax[3].set_title(f"Residuals (original - {name.lower()})")
+            ax[3].legend(fontsize="x-small")
+
+            for axis in ax:
+                axis.axvline(x=peak, color="red", linestyle=":")
 
             fig.tight_layout()
-
-            plt.savefig(
-                f"calibration/output/checks/{channel}_{mode}/{ifg}_04_ifg_residuals{suffix}.png",
-                bbox_inches="tight",
-            )
+            plt.savefig(f"{out_dir}/{n}_{tag}{suffix}.png", bbox_inches="tight")
             plt.close()
 
-            fig, ax = plt.subplots(4, 1, figsize=(10, 15), sharex=True, sharey=True)
-            fig.suptitle(
-                f"{channel.upper()} {mode.upper()} Corrected IFG {ifg}\nTemps: XCAL={xcal[ifg]:.2f}, ICAL={ical[ifg]:.2f}, dihed={dihedral[ifg]:.2f}, refhorn={refhorn[ifg]:.2f}, skyhorn={skyhorn[ifg]:.2f}, collimator={collimator[ifg]:.2f}, bolometer={bolometer[ifg]:.2f}"
-            )
-
-            secax = ax.flatten()[0].secondary_xaxis(
-                "top",
-                functions=(
-                    lambda x: x * scan_length / 512,
-                    lambda x: x * 512 / scan_length,
-                ),
-            )
-            secax.set_xlabel("Length (cm)")
-
-            ax[0].plot(original_ifgs[ifg, :] - np.median(original_ifgs[ifg, :]))
-            ax[0].axvline(
-                x=g.PEAK_POSITIONS[f"{channel}_{mode}"],
-                color="red",
-                linestyle="--",
-                label="Peak",
-            )
-            ax[0].set_title("Original IFG")
-
-            ax[1].plot(simulated_ifgs_corrected[ifg, :])
-            ax[1].axvline(
-                x=g.PEAK_POSITIONS[f"{channel}_{mode}"],
-                color="red",
-                linestyle="--",
-                label="Peak",
-            )
-            ax[1].set_title("Simulated Corrected IFG")
-
-            ax[2].plot(
-                original_ifgs[ifg, :] - np.median(original_ifgs[ifg, :]),
-                label="Original IFG",
-            )
-            ax[2].plot(
-                simulated_ifgs_corrected[ifg, :], label="Simulated Corrected IFG"
-            )
-            ax[2].axvline(
-                x=g.PEAK_POSITIONS[f"{channel}_{mode}"],
-                color="red",
-                linestyle="--",
-                label="Peak",
-            )
-            ax[2].set_title("Original vs Simulated Corrected IFG")
-            ax[2].legend()
-
-            ax[3].plot(
-                original_ifgs[ifg, :]
-                - np.median(original_ifgs[ifg, :])
-                - simulated_ifgs_corrected[ifg, :]
-            )
-            ax[3].plot(
-                [
-                    np.median(
-                        original_ifgs[ifg, :]
-                        - np.median(original_ifgs[ifg, :])
-                        - simulated_ifgs_corrected[ifg, :]
-                    )
-                ]
-                * 512
-            )
-            ax[3].axvline(
-                x=g.PEAK_POSITIONS[f"{channel}_{mode}"],
-                color="red",
-                linestyle="--",
-                label="Peak",
-            )
-            ax[3].set_title("Residuals (original - simulated corrected)")
-
-            fig.tight_layout()
-
-            plt.savefig(
-                f"calibration/output/checks/{channel}_{mode}/{ifg}_05_ifg_residuals_corrected{suffix}.png",
-                bbox_inches="tight",
-            )
-            plt.close()
+        # A number to go with the pictures: how much of the interferogram each model
+        # actually explains.
+        print(f"  IFG {n}: rms(original) = {np.sqrt(np.mean(original ** 2)):.4g}")
+        for name, result in results.items():
+            residual = original - result["ifgs"][n, :]
+            print(f"    {name:>10}: rms(original - simulated) = "
+                  f"{np.sqrt(np.mean(residual ** 2)):.4g}")

@@ -89,8 +89,16 @@ def calculate_time_constant(
 
 
 def get_bolometer_response_function(
-    channel, mode, bol_cmd_bias, bol_volt, Tbol, nui=None
+    channel, mode, bol_cmd_bias, bol_volt, Tbol, nui=None, tau_scale=1.0
 ):
+    """
+    S0 / (1 + i w tau), the bolometer response.
+
+    tau_scale multiplies the published time constant.  `fit_otf` fits one such scale
+    per channel alongside the emissivities, and its emissivities are only consistent
+    with a response built from tau_scale * tau, so anything using them has to pass the
+    same scale here.  tau_scale = 1 is the published time constant.
+    """
     R0, T0, G1, beta, rho, C1, C3, Jo, Jg = get_bolometer_parameters(channel, mode)
 
     # bolometer response function
@@ -120,6 +128,7 @@ def get_bolometer_response_function(
         rho=rho,
         T0=T0,
     )
+    tau = tau * tau_scale
 
     omega = utils.get_afreq(0 if mode[1] == "s" else 1, channel, 257, nui=nui)
 

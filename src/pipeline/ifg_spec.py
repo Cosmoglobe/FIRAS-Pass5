@@ -80,6 +80,7 @@ def ifg_to_spec(
     sweeps=1,
     nui=None,
     cutoff=None,
+    tau_scale=1.0,
 ):
     """
     Inputs are the same as spec_to_ifg, except for the ifg argument, which is the interferogram to be converted.
@@ -155,7 +156,7 @@ def ifg_to_spec(
     spec = spec / spec_norm
 
     B = bolometer.get_bolometer_response_function(
-        channel, mode, bol_cmd_bias, bol_volt, Tbol, nui=nui
+        channel, mode, bol_cmd_bias, bol_volt, Tbol, nui=nui, tau_scale=tau_scale
     )
     if nui is None:
         # B is (nifg, nfreq), one column per frequency
@@ -171,11 +172,19 @@ def ifg_to_spec(
         if cutoff is None:
             # bins below the cutoff carry no signal, the DC block having removed it
             cutoff = 5 if mtm_speed == 0 else 7
-        spec[:, cutoff : (len(otf) + cutoff)] = (
-            spec[:, cutoff : (len(otf) + cutoff)] / otf
-        )
-        spec[:, :cutoff] = 0
-        spec[:, (len(otf) + cutoff) :] = 0
+        if np.ndim(otf) > 0 and len(otf) == g.SPEC_SIZE:
+            # A full-length OTF is already aligned with the spectrum -- this is how the
+            # fitted solutions come, spanning every bin rather than the published band.
+            # Only the low bins are zeroed; the OTF itself decides what survives above.
+            with np.errstate(divide="ignore", invalid="ignore"):
+                spec = np.where(otf != 0, spec / np.where(otf == 0, 1, otf), 0)
+            spec[:, :cutoff] = 0
+        else:
+            spec[:, cutoff : (len(otf) + cutoff)] = (
+                spec[:, cutoff : (len(otf) + cutoff)] / otf
+            )
+            spec[:, :cutoff] = 0
+            spec[:, (len(otf) + cutoff) :] = 0
     else:
         spec = spec / otf
 
@@ -197,6 +206,7 @@ def spec_to_ifg(
     otf,
     apod,
     fnyq_icm,
+    tau_scale=1.0,
 ):
     """
     Converts spectrum to interferogram using the pipeline's etf and otf. Expects the spectrum to be in units of MJy/sr.
@@ -288,7 +298,7 @@ def spec_to_ifg(
         print(f"spec_to_ifg: Warning, {printed_nans} NaNs in spec_r")
 
     B = bolometer.get_bolometer_response_function(
-        channel, mode, bol_cmd_bias, bol_volt, Tbol
+        channel, mode, bol_cmd_bias, bol_volt, Tbol, tau_scale=tau_scale
     )
     spec_r = spec_r * B
 

@@ -26,8 +26,18 @@ explaining the data so the usable range can be read off.  (Bins below the cutoff
 0-4 for the short-slow modes -- are zeroed by the pipeline in `ifg_to_spec`, since the
 DC block leaves no signal there.)
 
-Output: `fitted_emissivities_{channel}_{mode}.npy`, shape (SPEC_SIZE, 10), complex.
-Column i is E_i in the ordering used by `R()` below.
+The bolometer time constant is fitted too, as a single scale factor on the published
+tau.  That scale -- and only that scale -- is shared across a channel's modes: there is
+one bolometer per channel and its thermal time constant cannot depend on how the mirror
+is scanning, so LL/SS and LL/LF are made to agree on tau.  The emissivities stay
+strictly per mode, each solved on its own frequency grid, because the two modes probe
+different frequencies and nothing says one mode's E(nu) carries over to the other.
+`solve_band`, `best_tau_scale` and `apply_tau_scale` split the fit so the shared scale
+can be chosen after every mode of the channel has been solved.
+
+Output: `fitted_emissivities_{channel}_{mode}.npy`, shape (SPEC_SIZE, 10), complex, one
+file per mode.  Column i is E_i in the ordering used by `R()` below, and
+`fit_diagnostics_{channel}_{mode}.npz` carries the `tau_scale` they go with.
 """
 
 import argparse
@@ -291,10 +301,10 @@ def noise_weights(spec, published_band):
     return weights
 
 
-def fit_band(spec, temps, frequencies, band, tau, omega, weights=None, rcond=None,
-             sum_zero=True, fit_tau=True):
+def solve_band(spec, temps, frequencies, band, tau, omega, weights=None, rcond=None,
+               sum_zero=True):
     """
-    Solve for the emissivities, and optionally the bolometer time constant, in one go.
+    Solve for the emissivities as an exact linear function of the time constant scale.
 
     With `sum_zero` the emissivities are constrained to sum to zero, by fitting
     E_i for i > 0 against the temperature-differenced columns P(T_i) - P(T_xcal) and
@@ -303,24 +313,25 @@ def fit_band(spec, temps, frequencies, band, tau, omega, weights=None, rcond=Non
     satisfies it to 3e-9.  Without it the fit runs away along that near-null direction
     at high frequency, where the Planck columns become nearly proportional.
 
-    With `fit_tau` the published time constant is scaled by a single factor `alpha`,
-    fitted jointly with the emissivities.  `spec` arrives already divided by the
-    published response S0 / (1 + i w tau), so undoing that factor gives
+    The published time constant is scaled by a factor `alpha`, fitted jointly with the
+    emissivities.  `spec` arrives already divided by the published response
+    S0 / (1 + i w tau), so undoing that factor gives
 
         U = spec / (1 + i w tau),      model:  A @ E  =  U + alpha * (i w tau U)
 
     which is linear in alpha as well as in E, and alpha does not multiply E.  So per
     bin one least-squares solve with the two right-hand sides U and i w tau U gives the
-    exact dependence, E(alpha) = E0 + alpha E1 and residual r(alpha) = r0 + alpha r1,
-    and the alpha minimising sum |r0 + alpha r1|^2 over every bin at once is
-    -sum Re(r0 conj(r1)) / sum |r1|^2.  alpha = 1 reproduces the published time
-    constant exactly, so `fit_tau=False` is the same fit as before.
+    exact dependence, E(alpha) = E0 + alpha E1 and residual r(alpha) = r0 + alpha r1.
+    This function stops there and returns those two pieces, so that the alpha
+    minimising the residual can be chosen over more than one mode at a time; see
+    `best_tau_scale` and `apply_tau_scale`.
 
     Returns
     -------
-    solution : (SPEC_SIZE, 10) complex array
-    diagnostics : dict of per-bin arrays, indexed by bin number
-    alpha : float, the factor the published time constant is scaled by
+    fit : dict
+        `base` and `slope` are E0 and E1 above, `quad` and `quad_null` are the
+        coefficients of |r(alpha)|^2 as a quadratic in alpha, and `fitted` marks the
+        bins that were solved at all.
     """
     n_free = N_EMISSIVITIES - 1 if sum_zero else N_EMISSIVITIES
     base = np.zeros((g.SPEC_SIZE, n_free), dtype=complex)
@@ -371,26 +382,56 @@ def fit_band(spec, temps, frequencies, band, tau, omega, weights=None, rcond=Non
         if quad[nui, 2] > 0:
             diagnostics["alpha"][nui] = -quad[nui, 1] / quad[nui, 2]
 
-    total = quad[fitted].sum(axis=0)
-    alpha = float(-total[1] / total[2]) if (fit_tau and total[2] > 0) else 1.0
+    return {"base": base, "slope": slope, "fitted": fitted, "quad": quad,
+            "quad_null": quad_null, "diagnostics": diagnostics, "sum_zero": sum_zero,
+            "n_points": spec.shape[0]}
+
+
+def best_tau_scale(fits):
+    """
+    The single time constant scale that minimises the residual over all of `fits`.
+
+    Each fit contributes sum |r0 + alpha r1|^2 = q0 + 2 alpha q1 + alpha^2 q2 summed
+    over its fitted bins, so the minimum over any collection of them is at
+    -sum q1 / sum q2.  Passing every mode of one channel gives that channel a single
+    tau: the four bolometers are physical detectors, one per channel, and their thermal
+    time constant cannot depend on how the mirror happens to be scanning.  Only tau is
+    shared this way -- each mode keeps its own emissivities, which `apply_tau_scale`
+    then evaluates at the common alpha.  alpha = 1 is the published time constant.
+    """
+    total = sum(fit["quad"][fit["fitted"]].sum(axis=0) for fit in fits)
+    return float(-total[1] / total[2]) if total[2] > 0 else 1.0
+
+
+def apply_tau_scale(fit, alpha):
+    """
+    Evaluate the emissivities and the chi^2 at a given time constant scale.
+
+    Returns
+    -------
+    solution : (SPEC_SIZE, N_EMISSIVITIES) complex array
+    diagnostics : dict of per-bin arrays, indexed by bin number
+    """
+    fitted, quad, quad_null = fit["fitted"], fit["quad"], fit["quad_null"]
+    diagnostics = dict(fit["diagnostics"])
 
     powers = np.array([1.0, 2 * alpha, alpha ** 2])
     solution = np.zeros((g.SPEC_SIZE, N_EMISSIVITIES), dtype=complex)
-    coefficients = base + alpha * slope
-    if sum_zero:
+    coefficients = fit["base"] + alpha * fit["slope"]
+    if fit["sum_zero"]:
         solution[:, 1:] = coefficients
         solution[:, 0] = -coefficients.sum(axis=1)
     else:
         solution[:] = coefficients
     solution[~fitted] = 0
 
-    n_points = spec.shape[0]
+    n_points = fit["n_points"]
     diagnostics["chi2"][fitted] = quad[fitted] @ powers
     diagnostics["chi2_null"][fitted] = quad_null[fitted] @ powers
     diagnostics["rms_resid"][fitted] = np.sqrt(diagnostics["chi2"][fitted] / n_points)
     diagnostics["rms_data"][fitted] = np.sqrt(diagnostics["chi2_null"][fitted] / n_points)
 
-    return solution, diagnostics, alpha
+    return solution, diagnostics
 
 
 def plot_solution(solution, published, band, published_band, frequencies, channel, mode, out_dir):
@@ -643,6 +684,11 @@ def main():
     parser.add_argument("--no-fit-tau", dest="fit_tau", action="store_false",
                         help="Keep the published bolometer time constant instead of fitting a "
                              "scale factor for it alongside the emissivities.")
+    parser.add_argument("--tau-per-mode", action="store_true",
+                        help="Fit the time constant scale separately for each mode instead of "
+                             "one per channel. There is one bolometer per channel, so its time "
+                             "constant cannot depend on the scan mode; this is a diagnostic for "
+                             "how far the two modes disagree, not a physical model.")
     parser.add_argument("--published-band", action="store_true",
                         help="Fit only the bins the published model covers, instead of every bin "
                              "up to Nyquist.")
@@ -656,91 +702,131 @@ def main():
 
     fnyq = gen_nyquistl("../reference/fex_samprate.txt", "../reference/fex_nyquist.txt", "int")
 
-    summary = {}
+    # One bolometer reads out each channel, so the time constant scale is fitted once
+    # per channel over all of its modes.  Group the work that way.
+    by_channel = {}
     for channel, mode in channel_modes(args.channels, args.modes):
-        print(f"\n{'=' * 70}\n{channel}_{mode}\n{'=' * 70}")
-        start = time.time()
+        by_channel.setdefault(channel, []).append(mode)
 
-        fields, temps = load_channel_mode(data, channel, mode, args.max_ifgs)
-        if temps.shape[1] < len(EMITTERS):
-            print("  not enough usable interferograms to fit; skipping")
+    summary = {}
+    for channel, modes in by_channel.items():
+        # Pass 1: solve every mode of this channel.  `solve_band` returns the
+        # emissivities as an exact linear function of the time constant scale, so the
+        # interferograms are transformed once even though the scale is not known yet.
+        solved = []
+        for mode in modes:
+            print(f"\n{'=' * 70}\n{channel}_{mode}\n{'=' * 70}")
+            start = time.time()
+
+            fields, temps = load_channel_mode(data, channel, mode, args.max_ifgs)
+            if temps.shape[1] < len(EMITTERS):
+                print("  not enough usable interferograms to fit; skipping")
+                continue
+
+            frequencies = utils.generate_frequencies(channel, mode, g.SPEC_SIZE)
+            frec = 4 * (g.CHANNELS[channel] % 2) + g.MODES[mode]
+            fnyq_icm = fnyq["icm"][frec]
+
+            published, published_band = published_emissivities(channel, mode)
+            # Bin 0 is the interferogram mean and has no Planck function to fit against
+            # (P(0, T) is 0/0), so the fit starts at bin 1.
+            band = published_band if args.published_band else slice(1, g.SPEC_SIZE)
+            print(f"  fitting bins {band.start}-{band.stop - 1} "
+                  f"({frequencies[band.start]:.1f}-{frequencies[band.stop - 1]:.1f} GHz); the "
+                  f"published model covers bins {published_band.start}-{published_band.stop - 1}")
+            print("  emitter temperature correlations (a pair at 1.000 cannot be separated):")
+            for row, name in zip(np.corrcoef(temps), EMITTERS):
+                print(f"    {name:>14}  " + " ".join(f"{value:6.3f}" for value in row))
+
+            print("  transforming interferograms...")
+            spec = raw_spectra(fields["ifg"], channel, mode, fields["adds_per_group"],
+                               fields["bol_cmd_bias"], fields["bol_volt"],
+                               temps[bolometer_row(temps, channel)], fnyq_icm,
+                               fields["gain"], fields["sweeps"])
+
+            finite = np.isfinite(spec[:, band]).all(axis=1)
+            if not finite.all():
+                print(f"  dropping {(~finite).sum()} interferograms with non-finite spectra")
+                spec, temps = spec[finite], temps[:, finite]
+
+            weights = noise_weights(spec, published_band) if args.weight else None
+            if weights is not None:
+                usable = weights > 0
+                if not usable.all():
+                    print(f"  dropping {(~usable).sum()} interferograms with no noise estimate")
+                    spec, temps, weights = spec[usable], temps[:, usable], weights[usable]
+
+            memory = get_memory_usage()
+            if memory:
+                print(f"  memory in use: {memory:.2f} GB")
+
+            tau = time_constants(channel, mode, fields["bol_cmd_bias"], fields["bol_volt"],
+                                 temps[bolometer_row(temps, channel)])
+            omega = audio_frequencies(channel, mode)
+            print(f"  published time constant: median {np.median(tau) * 1e3:.2f} ms, "
+                  f"w*tau at the top of the published band "
+                  f"{omega[published_band.stop - 1] * np.median(tau):.3f}")
+
+            print(f"  solving {band.stop - band.start} linear least-squares problems "
+                  f"({spec.shape[0]} interferograms x {len(EMITTERS)} emissivities"
+                  + (" + tau)..." if args.fit_tau else ")..."))
+            fit = solve_band(spec, temps, frequencies, band, tau, omega, weights, args.rcond,
+                             args.sum_zero)
+            print(f"  solve time: {time.time() - start:.1f} s")
+
+            # Everything kept here is O(SPEC_SIZE) and independent of the number of
+            # interferograms, so holding both modes of a channel costs nothing.
+            solved.append({"mode": mode, "fit": fit, "published": published, "band": band,
+                           "published_band": published_band, "frequencies": frequencies,
+                           "tau": float(np.median(tau)), "interferograms": spec.shape[0]})
+            del spec, temps, fields
+
+        if not solved:
             continue
 
-        frequencies = utils.generate_frequencies(channel, mode, g.SPEC_SIZE)
-        frec = 4 * (g.CHANNELS[channel] % 2) + g.MODES[mode]
-        fnyq_icm = fnyq["icm"][frec]
+        # Pass 2: pick the time constant scale, then finish every mode with it.
+        if not args.fit_tau:
+            scales = {entry["mode"]: 1.0 for entry in solved}
+        elif args.tau_per_mode:
+            scales = {entry["mode"]: best_tau_scale([entry["fit"]]) for entry in solved}
+        else:
+            shared = best_tau_scale([entry["fit"] for entry in solved])
+            scales = {entry["mode"]: shared for entry in solved}
+            if len(solved) > 1:
+                per_mode = " ".join(f"{entry['mode']}={best_tau_scale([entry['fit']]):.4f}"
+                                    for entry in solved)
+                print(f"\n  {channel}: one time constant scale for {len(solved)} modes, "
+                      f"alpha = {shared:.4f} (each mode on its own would pick {per_mode})")
 
-        published, published_band = published_emissivities(channel, mode)
-        # Bin 0 is the interferogram mean and has no Planck function to fit against
-        # (P(0, T) is 0/0), so the fit starts at bin 1.
-        band = published_band if args.published_band else slice(1, g.SPEC_SIZE)
-        print(f"  fitting bins {band.start}-{band.stop - 1} "
-              f"({frequencies[band.start]:.1f}-{frequencies[band.stop - 1]:.1f} GHz); the "
-              f"published model covers bins {published_band.start}-{published_band.stop - 1}")
-        print("  emitter temperature correlations (a pair at 1.000 cannot be separated):")
-        for row, name in zip(np.corrcoef(temps), EMITTERS):
-            print(f"    {name:>14}  " + " ".join(f"{value:6.3f}" for value in row))
+        for entry in solved:
+            mode, alpha = entry["mode"], scales[entry["mode"]]
+            band, published_band = entry["band"], entry["published_band"]
+            published, frequencies = entry["published"], entry["frequencies"]
+            print(f"\n{'-' * 70}\n{channel}_{mode}: results at alpha = {alpha:.4f}\n{'-' * 70}")
 
-        print("  transforming interferograms...")
-        spec = raw_spectra(fields["ifg"], channel, mode, fields["adds_per_group"],
-                           fields["bol_cmd_bias"], fields["bol_volt"],
-                           temps[bolometer_row(temps, channel)], fnyq_icm,
-                           fields["gain"], fields["sweeps"])
+            solution, diagnostics = apply_tau_scale(entry["fit"], alpha)
+            if args.fit_tau:
+                print(f"  time constant scale: alpha = {alpha:.4f} (alpha = 1 is the published "
+                      f"tau), so tau = {entry['tau'] * alpha * 1e3:.2f} ms at the median"
+                      + ("" if args.tau_per_mode else ", shared across this channel's modes"))
 
-        finite = np.isfinite(spec[:, band]).all(axis=1)
-        if not finite.all():
-            print(f"  dropping {(~finite).sum()} interferograms with non-finite spectra")
-            spec, temps = spec[finite], temps[:, finite]
+            summary[f"{channel}_{mode}"] = report(solution, published, diagnostics, band,
+                                                  published_band, frequencies)
+            summary[f"{channel}_{mode}"]["interferograms"] = entry["interferograms"]
+            summary[f"{channel}_{mode}"]["alpha"] = alpha
+            plot_solution(solution, published, band, published_band, frequencies, channel, mode,
+                          args.out_dir)
 
-        weights = noise_weights(spec, published_band) if args.weight else None
-        if weights is not None:
-            usable = weights > 0
-            if not usable.all():
-                print(f"  dropping {(~usable).sum()} interferograms with no noise estimate")
-                spec, temps, weights = spec[usable], temps[:, usable], weights[usable]
+            path = f"{args.out_dir}/fitted_emissivities_{channel}_{mode}.npy"
+            np.save(path, solution)
+            print(f"  wrote {path}")
 
-        memory = get_memory_usage()
-        if memory:
-            print(f"  memory in use: {memory:.2f} GB")
-
-        tau = time_constants(channel, mode, fields["bol_cmd_bias"], fields["bol_volt"],
-                             temps[bolometer_row(temps, channel)])
-        omega = audio_frequencies(channel, mode)
-        print(f"  published time constant: median {np.median(tau) * 1e3:.2f} ms, "
-              f"w*tau at the top of the published band "
-              f"{omega[published_band.stop - 1] * np.median(tau):.3f}")
-
-        print(f"  solving {band.stop - band.start} linear least-squares problems "
-              f"({spec.shape[0]} interferograms x {len(EMITTERS)} emissivities"
-              + (" + tau)..." if args.fit_tau else ")..."))
-        solution, diagnostics, alpha = fit_band(spec, temps, frequencies, band, tau, omega,
-                                                weights, args.rcond, args.sum_zero,
-                                                args.fit_tau)
-        if args.fit_tau:
-            print(f"  fitted time constant scale: alpha = {alpha:.4f} "
-                  f"(alpha = 1 is the published tau), so tau = {np.median(tau) * alpha * 1e3:.2f} "
-                  f"ms at the median")
-
-        summary[f"{channel}_{mode}"] = report(solution, published, diagnostics, band,
-                                              published_band, frequencies)
-        summary[f"{channel}_{mode}"]["interferograms"] = spec.shape[0]
-        summary[f"{channel}_{mode}"]["alpha"] = alpha
-        plot_solution(solution, published, band, published_band, frequencies, channel, mode,
-                      args.out_dir)
-
-        path = f"{args.out_dir}/fitted_emissivities_{channel}_{mode}.npy"
-        np.save(path, solution)
-        print(f"  wrote {path}")
-
-        # The emissivities are only consistent with a bolometer response built from
-        # alpha * tau, so anything re-deriving residuals from them needs alpha too.
-        path = f"{args.out_dir}/fit_diagnostics_{channel}_{mode}.npz"
-        np.savez(path, tau_scale=alpha, band=[band.start, band.stop],
-                 published_band=[published_band.start, published_band.stop], **diagnostics)
-        print(f"  wrote {path}")
-        print(f"  total time: {time.time() - start:.1f} s")
-
-        del spec, temps, fields, solution
+            # The emissivities are only consistent with a bolometer response built from
+            # alpha * tau, so anything re-deriving residuals from them needs alpha too.
+            path = f"{args.out_dir}/fit_diagnostics_{channel}_{mode}.npz"
+            np.savez(path, tau_scale=alpha, band=[band.start, band.stop],
+                     published_band=[published_band.start, published_band.stop], **diagnostics)
+            print(f"  wrote {path}")
 
     if len(summary) > 1:
         print(f"\n{'=' * 70}\nAll channels and modes\n{'=' * 70}")
