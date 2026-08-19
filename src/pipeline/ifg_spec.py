@@ -79,6 +79,7 @@ def ifg_to_spec(
     gain=1,
     sweeps=1,
     nui=None,
+    cutoff=None,
 ):
     """
     Inputs are the same as spec_to_ifg, except for the ifg argument, which is the interferogram to be converted.
@@ -156,13 +157,20 @@ def ifg_to_spec(
     B = bolometer.get_bolometer_response_function(
         channel, mode, bol_cmd_bias, bol_volt, Tbol, nui=nui
     )
-    spec = spec / B[:,0]
+    if nui is None:
+        # B is (nifg, nfreq), one column per frequency
+        spec = spec / B
+    elif np.ndim(B) == 2:
+        # B is (nifg, 1) for the single requested frequency
+        spec = spec / B[:, 0]
+    else:
+        # a single interferogram at a single frequency
+        spec = spec / B
 
     if nui is None:
-        if mtm_speed == 0:
-            cutoff = 5
-        else:
-            cutoff = 7
+        if cutoff is None:
+            # bins below the cutoff carry no signal, the DC block having removed it
+            cutoff = 5 if mtm_speed == 0 else 7
         spec[:, cutoff : (len(otf) + cutoff)] = (
             spec[:, cutoff : (len(otf) + cutoff)] / otf
         )

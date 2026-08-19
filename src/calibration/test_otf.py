@@ -38,10 +38,9 @@ for channel in g.CHANNELS.keys():
         if mode == "lf" and (channel[1] == "h"):
             continue
         # open fitted_emissivities.npy and plot the results
-        # fitted_emissivities = np.load(
-        #     f"./calibration/output/fitted_emissivities_{channel}_{mode}.npy"
-        # )
-        fitted_emissivities = np.load("/mn/stornext/u3/duncanwa/FIRAS-Pass5/src/calibration/output/original_pipeline.npy")
+        fitted_emissivities = np.load(f"./calibration/output/fitted_emissivities_{channel}_{mode}"
+                                      ".npy")
+        # fitted_emissivities = np.load("/mn/stornext/u3/duncanwa/FIRAS-Pass5/src/calibration/output/original_pipeline.npy")
         frequencies = utils.generate_frequencies(channel, mode, 257)
 
         plt.figure(figsize=(10, 6))
@@ -49,9 +48,9 @@ for channel in g.CHANNELS.keys():
         plt.plot(frequencies, fitted_emissivities.imag, linestyle="dashed")
         plt.xlabel("Frequency (GHz)")
         plt.ylabel("Emissivity")
-        plt.title("Fitted Emissivities vs Frequency")
+        plt.title(f"Fitted Emissivities vs Frequency - {channel.upper()} {mode.upper()}")
         plt.grid()
-        plt.savefig("./calibration/output/fitted_emissivities.png")
+        plt.savefig(f"./calibration/output/fitted_emissivities_{channel}_{mode}.png")
         plt.close()
 
         # compare to the published ones
@@ -137,8 +136,11 @@ for channel in g.CHANNELS.keys():
             ax[i].legend()
             ax[i].grid()
             ax[i].set_ylim(-1, 1)
+        fig.suptitle(f"{channel.upper()} {mode.upper()}")
         plt.tight_layout()
-        plt.savefig("./calibration/output/fitted_emissivities_comparison.png")
+        plt.savefig(
+            f"./calibration/output/fitted_emissivities_comparison_{channel}_{mode}.png"
+        )
         plt.close()
 
         if mode == "lf" and (channel[1] == "h"):
@@ -192,7 +194,8 @@ for channel in g.CHANNELS.keys():
         D = np.zeros(257, dtype=complex)
         R = np.zeros(257, dtype=complex)
         S = np.zeros(257, dtype=complex)
-        for freqi, freq in enumerate(frequencies):
+        # from bin 1: bin 0 is DC, where P(0, T) is 0/0 and nothing is fitted
+        for freqi in range(1, len(frequencies)):
             D[freqi] = fit_otf.D(
                 fitted_emissivities[freqi, :],
                 freqi,
@@ -201,8 +204,8 @@ for channel in g.CHANNELS.keys():
                 mode,
                 gain[n],
                 sweeps[n],
-                bol_cmd_bias[n],
-                bol_volt[n],
+                bol_cmd_bias[n] / 25.5,
+                bol_volt[n] ,
                 temps[:, n],
                 adds_per_group[n],
                 fnyq_icm,
@@ -214,31 +217,37 @@ for channel in g.CHANNELS.keys():
             # print(f"D, R, S: {D}, {R}, {S}")
         residuals_fitted = D - R - S
 
+        # The published emissivities start at the low-frequency cutoff, not at bin 0:
+        # frequencies_pub[i] is frequencies[i + cutoff].  D, R and S index the spectrum
+        # by bin, so the bin number is freqi + cutoff, and bin 0 has to be left out
+        # entirely because P(0, T) is 0/0.
+        cutoff = fit_otf.low_frequency_cutoff(mode)
         residuals_pub = np.zeros(frequencies_pub.shape[0], dtype=complex)
         for freqi, freq in enumerate(frequencies_pub):
+            nui = freqi + cutoff
             D_pub = fit_otf.D(
                 emissivities[freqi, :],
-                freqi,
+                nui,
                 ifgs[n],
                 channel,
                 mode,
                 gain[n],
                 sweeps[n],
-                bol_cmd_bias[n],
+                bol_cmd_bias[n] / 25.5,
                 bol_volt[n],
                 temps[:, n],
                 adds_per_group[n],
                 fnyq_icm,
             )
-            R_pub = fit_otf.R(emissivities[freqi, :], freqi, temps[:, n], frequencies)
-            S_pub = fit_otf.S(freqi, frequencies, temps[:, n])
+            R_pub = fit_otf.R(emissivities[freqi, :], nui, temps[:, n], frequencies)
+            S_pub = fit_otf.S(nui, frequencies, temps[:, n])
             residuals_pub[freqi] = D_pub - R_pub - S_pub
 
         plt.figure(figsize=(10, 6))
         # plt.plot(ifgs[n, :], label="Original IFG", color="black")
         plt.plot(
-            frequencies,
-            residuals_fitted,
+            frequencies_pub,
+            residuals_fitted[cutoff:len(frequencies_pub) + cutoff],
             label="Fitted Emissivities Residuals",
             color="red",
         )
@@ -248,15 +257,15 @@ for channel in g.CHANNELS.keys():
             label="Published Emissivities Residuals",
             color="blue",
         )
-        plt.plot(
-            frequencies, utils.planck(frequencies, g.T_CMB), label="CMB", color="green"
-        )
+        # plt.plot(
+        #     frequencies, utils.planck(frequencies, g.T_CMB), label="CMB", color="green"
+        # )
         plt.xlabel("Frequency (GHz)")
         plt.ylabel("Signal")
-        plt.title(f"IFG {n+1} Comparison")
+        plt.title(f"{channel.upper()} {mode.upper()} IFG {n+1} Comparison")
         plt.legend()
         plt.grid()
-        plt.savefig("./calibration/output/ifg_residuals_comparison.png")
+        plt.savefig(f"./calibration/output/ifg_residuals_comparison_{channel}_{mode}.png")
         plt.close()
 
         # plot the different components of the residual
@@ -272,8 +281,8 @@ for channel in g.CHANNELS.keys():
         plt.plot(frequencies, (D - R).imag, color="purple", linestyle="dashed")
         plt.xlabel("Frequency (GHz)")
         plt.ylabel("Signal")
-        plt.title(f"IFG {n+1} Residual Components")
+        plt.title(f"{channel.upper()} {mode.upper()} IFG {n+1} Residual Components")
         plt.legend()
         plt.grid()
-        plt.savefig("./calibration/output/residual_components.png")
+        plt.savefig(f"./calibration/output/residual_components_{channel}_{mode}.png")
         plt.close()

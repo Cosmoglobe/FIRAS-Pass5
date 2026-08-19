@@ -1,25 +1,76 @@
 """
-Script to fit an optical transfer function to the calibration data. For now, it follows the model:
-S_sky/XCAL = 1/OTF * 1/ETF * 1/Bol * Y - R,
-where Y is the Fourier transformed interferogram and R is defined by
-R = 1/OTF * sum over all emitters i (excluding XCAL) of E_i * P(T_i).
+Fit the optical transfer function (a.k.a. the XCAL emissivity) together with the
+emissivities of the other emitters to the calibration data.
+
+Model, for one frequency bin nu and one interferogram j:
+
+    Y_j(nu) / (ETF * Bol)  =  sum_i E_i(nu) * P(nu, T_i^j)
+
+with i = 0 the XCAL (E_0 = OTF), i = 1..5 the ICAL, dihedral, refhorn, skyhorn and
+collimator/structure, and i = 6..9 the four bolometer assemblies (RH, RL, LH, LL),
+each at its own measured temperature.  This is the same model as
+
+    S_XCAL = 1/OTF * 1/ETF * 1/Bol * Y - R,    R = 1/OTF * sum_{i>0} E_i * P(T_i)
+
+multiplied through by the OTF, which is how it used to be written here.
+
+The right-hand side is *linear* in the emissivities, so every frequency bin is an
+ordinary complex linear least-squares problem and is solved directly with
+np.linalg.lstsq.  There is no iterative optimiser and no numerical gradient: the
+measured spectrum on the left-hand side does not depend on any fitted parameter, so
+the interferograms are Fourier transformed exactly once.
+
+Every bin from the low-frequency cutoff up to Nyquist is fitted, not only the 43 bins
+where the published model is defined; `report()` prints where the model stops
+explaining the data so the usable range can be read off.  (Bins below the cutoff --
+0-4 for the short-slow modes -- are zeroed by the pipeline in `ifg_to_spec`, since the
+DC block leaves no signal there.)
+
+Output: `fitted_emissivities_{channel}_{mode}.npy`, shape (SPEC_SIZE, 10), complex.
+Column i is E_i in the ordering used by `R()` below.
 """
 
 import argparse
-import gc
 import os
 import time
-from multiprocessing import Pool, cpu_count
 
 import matplotlib.pyplot as plt
 import numpy as np
 from astropy.io import fits
-from scipy.optimize import fmin_l_bfgs_b, minimize
 
 import globals as g
+from calibration import bolometer
 from pipeline import ifg_spec
 from utils import my_utils as utils
 from utils.config import gen_nyquistl
+
+# The four bolometer assemblies, in the order R() documents for indices 6-9.  Each one
+# has its own temperature, measured in its own channel.
+BOLOMETER_CHANNELS = ["rh", "rl", "lh", "ll"]
+assert [g.CHANNELS[c] for c in BOLOMETER_CHANNELS] == [0, 1, 2, 3]
+
+# Rows of `temps`, and the columns of the saved solution.
+EMITTERS = [
+    "xcal (OTF)",
+    "ical",
+    "dihedral",
+    "refhorn",
+    "skyhorn",
+    "collimator",
+] + [f"bolometer {c}" for c in BOLOMETER_CHANNELS]
+N_EMISSIVITIES = len(EMITTERS)
+
+# Where the four bolometer assemblies start in EMITTERS.
+FIRST_BOLOMETER = EMITTERS.index("bolometer rh")
+
+# The published emissivity columns for emitters 0-5 (the XCAL one is TRANSFE).  The
+# published model has a single bolometer column, BOLOMET, which is compared against
+# the fitted channel's own bolometer.
+FITS_COLUMNS = ["TRANSFE", "ICAL", "DIHEDRA", "REFHORN", "SKYHORN", "STRUCTU"]
+
+# bol_cmd_bias is stored as raw counts; the rest of the pipeline divides by this to
+# get volts before handing it to the bolometer model (see fsl.py, cal_ifgs.py).
+BOL_CMD_BIAS_TO_VOLTS = 25.5
 
 
 def get_memory_usage():
@@ -32,12 +83,24 @@ def get_memory_usage():
         return None
 
 
+def bolometer_row(temps, channel):
+    """
+    Row of `temps` holding the temperature of this channel's own bolometer.
+
+    The bolometer response function needs the bolometer that is actually reading this
+    channel out, not the other three.  Callers that pass the older seven-row array,
+    whose single bolometer row is already the right one, get that row back.
+    """
+    row = FIRST_BOLOMETER + g.CHANNELS[channel]
+    return min(row, len(temps) - 1)
+
+
 def D(Ei, nui, ifg, channel, mode, gain, sweeps, bol_cmd_bias, bol_volt, temps, adds_per_group,
       fnyq_icm, apod=False):
-
+    """Measured spectrum divided by the OTF, i.e. 1/OTF * 1/ETF * 1/Bol * Y."""
     spec = ifg_spec.ifg_to_spec(ifg, channel, mode, adds_per_group, bol_cmd_bias, bol_volt,
                                 fnyq_icm, otf=Ei[0],
-                                Tbol=temps[6],  # TODO: generalize for other channels
+                                Tbol=temps[bolometer_row(temps, channel)],
                                 apod=apod, gain=gain, sweeps=sweeps, nui=nui)
 
     return spec
@@ -49,22 +112,23 @@ def R(Ei, nui, temps, frequencies):
 
     Parameters
     ----------
-    H : array_like
-        Optical transfer function a.k.a. emissivity of the XCAL.
     Ei : array_like
-        2D array of the emissivities over frequency for each of the other nine emitters.
+        The ten emissivities at this frequency.  Ei[0] is the optical transfer
+        function a.k.a. the emissivity of the XCAL; the rest are
         1: ICAL, 2: dihedral, 3: refhorn, 4: skyhorn, 5: collimator, 6: bolometer_rh,
         7: bolometer_rl, 8: bolometer_lh, 9: bolometer_ll
     """
-    sum = np.zeros_like(temps[0], dtype=complex)
+    total = np.zeros_like(temps[0], dtype=complex)
     for i in range(1, Ei.shape[0]):
-        # All bolometers (indices 6-9) use the same temperature temps[6]
-        temp_idx = min(i, 6)
-        sum += Ei[i] * utils.planck(frequencies[nui], temps[temp_idx])
+        # `temps` normally carries one row per emitter, including a separate temperature
+        # for each of the four bolometers.  Callers that pass the older seven-row array
+        # fall back to its single bolometer temperature for all four.
+        temp_idx = min(i, len(temps) - 1)
+        total += Ei[i] * utils.planck(frequencies[nui], temps[temp_idx])
 
     H = Ei[0]
 
-    return sum / H
+    return total / H
 
 
 def S(nui, frequencies, temps):
@@ -73,363 +137,624 @@ def S(nui, frequencies, temps):
 
 def full_function(Ei, nui, ifg, channel, mode, gain, sweeps, bol_cmd_bias, bol_volt, temps,
                   adds_per_group, fnyq_icm, frequencies):
+    """Sum of squared residuals of the model, for diagnostics.
 
-
+    The residual is D - R - S (the model is S = D - R); it is multiplied by the OTF so
+    that it does not blow up where the OTF is small.
+    """
     Di = D(Ei, nui, ifg, channel, mode, gain, sweeps, bol_cmd_bias, bol_volt, temps,
-                    adds_per_group, fnyq_icm) 
-    Ri = R(Ei, nui, temps, frequencies) 
-    Si = S(nui, frequencies,temps)
+           adds_per_group, fnyq_icm)
+    Ri = R(Ei, nui, temps, frequencies)
+    Si = S(nui, frequencies, temps)
 
-    return np.sum(np.abs(Ei[0]*(Ri - Di - Si)) ** 2)  # Use abs to handle complex numbers properly
+    return np.sum(np.abs(Ei[0] * (Di - Ri - Si)) ** 2)
 
 
-def real_to_complex(z):
+def low_frequency_cutoff(mode):
+    """First bin `ifg_to_spec` keeps by default; below it the DC block cuts the signal."""
+    return 5 if mode[1] == "s" else 7
+
+
+def channel_modes(channels, modes):
     """
-    Real vector of length 2n -> complex of length n.
-    Taken from https://stackoverflow.com/questions/51211055/can-scipy-optimize-minimize-functions-of-complex-variables-at-all-and-how.
+    The channel/mode combinations that can be fitted, out of those asked for.
+
+    The high-frequency channels have no long-slow mode, and `generate_frequencies` and
+    the published models only cover ss and lf.
     """
-    return z[: len(z) // 2] + 1j * z[len(z) // 2 :]
+    for channel in channels:
+        for mode in modes:
+            if mode == "lf" and channel[1] == "h":
+                print(f"skipping {channel}_{mode}: the high channels have no long-slow mode")
+                continue
+            if mode not in g.MODES:
+                print(f"skipping {channel}_{mode}: mode not in g.MODES")
+                continue
+            model = f"{g.PUB_MODEL}FIRAS_CALIBRATION_MODEL_{channel.upper()}{mode.upper()}.FITS"
+            if not os.path.exists(model):
+                print(f"skipping {channel}_{mode}: no published model at {model}")
+                continue
+            yield channel, mode
 
 
-def complex_to_real(z):
+def published_emissivities(channel, mode):
     """
-    Complex vector of length n -> real of length 2n
-    Taken from https://stackoverflow.com/questions/51211055/can-scipy-optimize-minimize-functions-of-complex-variables-at-all-and-how.
+    Read the published calibration model.
+
+    Returns
+    -------
+    published : (SPEC_SIZE, N_EMISSIVITIES) complex array
+        The published emissivities in EMITTERS order, zero outside the published band.
+        Its single bolometer column is placed in this channel's own bolometer slot.
+    band : slice
+        The frequency bins where the published model is non-zero.
     """
-    return np.concatenate((np.real(z), np.imag(z)))
+    cutoff = low_frequency_cutoff(mode)
 
-
-def full_function_real(Ei_real, nui, ifg, channel, mode, gain, sweeps, bol_cmd_bias, bol_volt,
-                       temps, adds_per_group, fnyq_icm, frequencies):
-    """Wrapper that converts real parameters to complex for optimization."""
-    Ei = real_to_complex(Ei_real)
-    ff = full_function(Ei, nui, ifg, channel, mode, gain, sweeps, bol_cmd_bias, bol_volt, temps,
-                         adds_per_group, fnyq_icm, frequencies)
-    return ff
-
-
-# Global variables for multiprocessing to avoid copying large arrays
-_global_data = {}
-
-def _init_worker(ifg, channel, mode, gain, sweeps, bol_cmd_bias, bol_volt, temps, 
-                 adds_per_group, fnyq_icm, frequencies, cutoff):
-    """Initialize worker process with shared data."""
-    _global_data['ifg'] = ifg
-    _global_data['channel'] = channel
-    _global_data['mode'] = mode
-    _global_data['gain'] = gain
-    _global_data['sweeps'] = sweeps
-    _global_data['bol_cmd_bias'] = bol_cmd_bias
-    _global_data['bol_volt'] = bol_volt
-    _global_data['temps'] = temps
-    _global_data['adds_per_group'] = adds_per_group
-    _global_data['fnyq_icm'] = fnyq_icm
-    _global_data['frequencies'] = frequencies
-    _global_data['cutoff'] = cutoff
-    
-    # Load FITS data ONCE per worker to avoid repeated file I/O
-    fits_data = fits.open(
+    with fits.open(
         f"{g.PUB_MODEL}FIRAS_CALIBRATION_MODEL_{channel.upper()}{mode.upper()}.FITS"
+    ) as fits_data:
+        record = fits_data[1].data
+        otf = record["RTRANSFE"][0] + 1j * record["ITRANSFE"][0]
+        n_band = int(np.count_nonzero(otf))
+
+        published = np.zeros((g.SPEC_SIZE, N_EMISSIVITIES), dtype=complex)
+        columns = FITS_COLUMNS + ["BOLOMET"]
+        rows = list(range(len(FITS_COLUMNS))) + [FIRST_BOLOMETER + g.CHANNELS[channel]]
+        for row, name in zip(rows, columns):
+            column = record[f"R{name}"][0] + 1j * record[f"I{name}"][0]
+            published[cutoff:cutoff + n_band, row] = column[:n_band]
+
+    return published, slice(cutoff, cutoff + n_band)
+
+
+def raw_spectra(ifg, channel, mode, adds_per_group, bol_cmd_bias, bol_volt, Tbol, fnyq_icm,
+                gain, sweeps):
+    """
+    The left-hand side of the model: Y / (ETF * Bol), in MJy/sr.
+
+    This is `ifg_to_spec` with the division by the OTF disabled, i.e. everything that
+    does *not* depend on the fitted emissivities.  It is computed once for all
+    frequencies instead of once per objective evaluation.  The unit OTF spans the whole
+    spectrum and `cutoff=0` turns off the zeroing of the low bins, so every frequency
+    reaches the fit; whether the low bins carry anything is then a result rather than
+    an assumption.
+    """
+    return ifg_spec.ifg_to_spec(
+        ifg,
+        channel,
+        mode,
+        adds_per_group,
+        bol_cmd_bias,
+        bol_volt,
+        fnyq_icm,
+        otf=np.ones(g.SPEC_SIZE),
+        Tbol=Tbol,
+        apod=False,
+        gain=gain,
+        sweeps=sweeps,
+        cutoff=0,
     )
-    otf = fits_data[1].data["RTRANSFE"][0] + 1j * fits_data[1].data["ITRANSFE"][0]
-    otf = otf[np.abs(otf) > 0]
-    
-    # Pre-extract all emissivity data
-    _global_data['fits_otf'] = otf
-    _global_data['fits_ical'] = (fits_data[1].data["RICAL"][0] + 
-                                  1j * fits_data[1].data["IICAL"][0])[:len(otf)]
-    _global_data['fits_dihedra'] = (fits_data[1].data["RDIHEDRA"][0] + 
-                                     1j * fits_data[1].data["IDIHEDRA"][0])[:len(otf)]
-    _global_data['fits_refhorn'] = (fits_data[1].data["RREFHORN"][0] + 
-                                     1j * fits_data[1].data["IREFHORN"][0])[:len(otf)]
-    _global_data['fits_skyhorn'] = (fits_data[1].data["RSKYHORN"][0] + 
-                                     1j * fits_data[1].data["ISKYHORN"][0])[:len(otf)]
-    _global_data['fits_structu'] = (fits_data[1].data["RSTRUCTU"][0] + 
-                                     1j * fits_data[1].data["ISTRUCTU"][0])[:len(otf)]
-    _global_data['fits_bolomet'] = (fits_data[1].data["RBOLOMET"][0] + 
-                                     1j * fits_data[1].data["IBOLOMET"][0])[:len(otf)]
-    fits_data.close()
 
-def fit_single_frequency(nui):
+
+def time_constants(channel, mode, bol_cmd_bias, bol_volt, Tbol):
+    """The published bolometer time constant tau, one value per interferogram."""
+    R0, T0, G1, beta, rho, C1, C3, Jo, Jg = bolometer.get_bolometer_parameters(channel, mode)
+    return bolometer.calculate_time_constant(C3=C3, Tbol=Tbol, C1=C1, G1=G1, beta=beta,
+                                             bol_volt=bol_volt, Jo=Jo, Jg=Jg,
+                                             bol_cmd_bias=bol_cmd_bias, rho=rho, T0=T0)
+
+
+def audio_frequencies(channel, mode):
+    """The audio frequency of each spectral bin, as the bolometer response function uses it."""
+    return utils.get_afreq(0 if mode[1] == "s" else 1, channel, g.SPEC_SIZE)
+
+
+def design_matrix(temps, frequency):
     """
-    Fit emissivities for a single frequency index.
-    This function is designed to be called in parallel.
-    Uses global data initialized by _init_worker.
-    1: ICAL, 2: dihedral, 3: refhorn, 4: skyhorn, 5: collimator, 6: bolometer_rh, 7: bolometer_rl,
-    8: bolometer_lh, 9: bolometer_ll
+    Planck function of every emitter temperature at one frequency.
+
+    Parameters
+    ----------
+    temps : (7, nifg) array
+        Emitter temperatures in EMITTERS order.
+    frequency : float
+        Frequency in GHz.
+
+    Returns
+    -------
+    (nifg, 7) complex array, one column per emissivity to fit.
     """
-    # Get data from global variables
-    ifg = _global_data['ifg']
-    channel = _global_data['channel']
-    mode = _global_data['mode']
-    gain = _global_data['gain']
-    sweeps = _global_data['sweeps']
-    bol_cmd_bias = _global_data['bol_cmd_bias']
-    bol_volt = _global_data['bol_volt']
-    temps = _global_data['temps']
-    adds_per_group = _global_data['adds_per_group']
-    fnyq_icm = _global_data['fnyq_icm']
-    frequencies = _global_data['frequencies']
-    cutoff = _global_data['cutoff']
-    
-    # Get pre-loaded FITS data
-    otf = _global_data['fits_otf']
-    fits_ical = _global_data['fits_ical']
-    fits_dihedra = _global_data['fits_dihedra']
-    fits_refhorn = _global_data['fits_refhorn']
-    fits_skyhorn = _global_data['fits_skyhorn']
-    fits_structu = _global_data['fits_structu']
-    fits_bolomet = _global_data['fits_bolomet']
-
-    # Set initial guess as the published emissivities (only for this frequency)
-    Ei0 = np.ones((10, 257), dtype=complex) +  1j*np.ones((10, 257), dtype=complex)
-    Ei0[0][cutoff:cutoff+len(otf)] = otf
-    Ei0[1][cutoff:cutoff+len(otf)] = fits_ical
-    Ei0[2][cutoff:cutoff+len(otf)] = fits_dihedra
-    Ei0[3][cutoff:cutoff+len(otf)] = fits_refhorn
-    Ei0[4][cutoff:cutoff+len(otf)] = fits_skyhorn
-    Ei0[5][cutoff:cutoff+len(otf)] = fits_structu
-    Ei0[6][cutoff:cutoff+len(otf)] = fits_bolomet
-    Ei0[7] = Ei0[6]
-    Ei0[8] = Ei0[6]
-    Ei0[9] = Ei0[6]
+    return np.array([utils.planck(frequency, temp) for temp in temps]).T.astype(complex)
 
 
-    Ei0 *= np.random.randn(10,257)
+def noise_weights(spec, published_band):
+    """
+    Relative inverse-noise weight per interferogram, from the out-of-band bins.
 
-    Ei0_real = complex_to_real(Ei0)
+    The bins above the published band carry no signal, so their scatter measures the
+    noise of each interferogram.  The electronics transfer function suppresses them, so
+    this is only meaningful as a *relative* weight between interferograms, which is all
+    the least-squares solution needs.
+    """
+    first_noise_bin = published_band.stop + 5
+    if first_noise_bin >= g.SPEC_SIZE - 10:
+        print("  not enough out-of-band bins to estimate noise; using uniform weights")
+        return np.ones(spec.shape[0])
 
-
-
-    warnflag = 2
-
-    while warnflag == 2:
-
-        x, f, d = fmin_l_bfgs_b(
-            full_function_real,
-            Ei0_real[:,nui],
-            args=(
-                nui,
-                ifg,
-                channel,
-                mode,
-                gain,
-                sweeps,
-                bol_cmd_bias,
-                bol_volt,
-                temps,
-                adds_per_group,
-                fnyq_icm,
-                frequencies,
-            ),
-            approx_grad=True,
-            epsilon=1e-8,  # Larger epsilon for more stable gradient approximation
-            maxiter=5000,
-            factr=1e7,  # Moderate tolerance
-            pgtol=1e-5,
-        )
-        warnflag = d.get('warnflag')
-        if d.get('warnflag') == 2:
-            Ei0 *= np.random.randn(10,257)
-            Ei0_real = complex_to_real(Ei0)
+    sigma = np.std(spec[:, first_noise_bin:], axis=1)
+    good = np.isfinite(sigma) & (sigma > 0)
+    weights = np.zeros(spec.shape[0])
+    weights[good] = 1.0 / sigma[good]
+    # normalise so the chi^2 stays on a readable scale
+    weights /= np.median(weights[good])
+    return weights
 
 
-    # If L-BFGS-B fails with line search error, try Powell method (derivative-free)
-    if d.get("warnflag") == 2:
-        print("This has failed!")
-        print(x, f, d, frequencies[nui])
-        result = minimize(
-            full_function_real,
-            Ei0_real[:,nui],
-            args=(
-                nui,
-                ifg,
-                channel,
-                mode,
-                gain,
-                sweeps,
-                bol_cmd_bias,
-                bol_volt,
-                temps,
-                adds_per_group,
-                fnyq_icm,
-                frequencies,
-            ),
-            method="Powell",
-            options={"maxiter": 5000, "ftol": 1e-6},
-        )
-        x = result.x
-        success = result.success
-        if not success and nui % 10 == 0:
-            print(f"Warning: Frequency {nui} - Powell method failed to converge")
-    elif d.get("warnflag") != 0 and nui % 10 == 0:
-        print(
-            f"Warning: Frequency {nui} with code {d.get('warnflag')} - {d.get('task', '')}"
-        )
+def fit_band(spec, temps, frequencies, band, tau, omega, weights=None, rcond=None,
+             sum_zero=True, fit_tau=True):
+    """
+    Solve for the emissivities, and optionally the bolometer time constant, in one go.
 
-    # Convert result back to complex
-    Ei_solution = real_to_complex(x)
+    With `sum_zero` the emissivities are constrained to sum to zero, by fitting
+    E_i for i > 0 against the temperature-differenced columns P(T_i) - P(T_xcal) and
+    setting E_0 = -sum_{i>0} E_i.  A differential instrument sees nothing when every
+    emitter sits at the same temperature, so this has to hold; the published model
+    satisfies it to 3e-9.  Without it the fit runs away along that near-null direction
+    at high frequency, where the Planck columns become nearly proportional.
 
-    return nui, Ei_solution
+    With `fit_tau` the published time constant is scaled by a single factor `alpha`,
+    fitted jointly with the emissivities.  `spec` arrives already divided by the
+    published response S0 / (1 + i w tau), so undoing that factor gives
+
+        U = spec / (1 + i w tau),      model:  A @ E  =  U + alpha * (i w tau U)
+
+    which is linear in alpha as well as in E, and alpha does not multiply E.  So per
+    bin one least-squares solve with the two right-hand sides U and i w tau U gives the
+    exact dependence, E(alpha) = E0 + alpha E1 and residual r(alpha) = r0 + alpha r1,
+    and the alpha minimising sum |r0 + alpha r1|^2 over every bin at once is
+    -sum Re(r0 conj(r1)) / sum |r1|^2.  alpha = 1 reproduces the published time
+    constant exactly, so `fit_tau=False` is the same fit as before.
+
+    Returns
+    -------
+    solution : (SPEC_SIZE, 10) complex array
+    diagnostics : dict of per-bin arrays, indexed by bin number
+    alpha : float, the factor the published time constant is scaled by
+    """
+    n_free = N_EMISSIVITIES - 1 if sum_zero else N_EMISSIVITIES
+    base = np.zeros((g.SPEC_SIZE, n_free), dtype=complex)
+    slope = np.zeros((g.SPEC_SIZE, n_free), dtype=complex)
+    fitted = np.zeros(g.SPEC_SIZE, dtype=bool)
+    # sum |r0 + a r1|^2 = quad[0] + 2a quad[1] + a^2 quad[2], and likewise for the data
+    quad = np.zeros((g.SPEC_SIZE, 3))
+    quad_null = np.zeros((g.SPEC_SIZE, 3))
+    diagnostics = {key: np.full(g.SPEC_SIZE, np.nan)
+                   for key in ("cond", "rank", "chi2", "chi2_null", "rms_resid", "rms_data",
+                               "alpha")}
+
+    for nui in range(band.start, band.stop):
+        A = design_matrix(temps, frequencies[nui])
+        if sum_zero:
+            A = A[:, 1:] - A[:, [0]]
+
+        y = spec[:, nui] / (1 + 1j * omega[nui] * tau)
+        x = 1j * omega[nui] * tau * y
+
+        if weights is not None:
+            A = A * weights[:, np.newaxis]
+            y, x = y * weights, x * weights
+
+        # High up the band the Planck columns are ~1e-40 and the data is pure noise;
+        # the solve is still well defined, but guard against a column underflowing away
+        # entirely.
+        if not (np.isfinite(A).all() and np.isfinite(y).all() and np.isfinite(x).all()
+                and np.any(A)):
+            continue
+
+        coefficients, _, rank, _ = np.linalg.lstsq(A, np.stack([y, x], axis=1), rcond=rcond)
+        base[nui], slope[nui] = coefficients[:, 0], coefficients[:, 1]
+        r0 = A @ base[nui] - y
+        r1 = A @ slope[nui] - x
+
+        fitted[nui] = True
+        quad[nui] = [np.sum(np.abs(r0) ** 2), np.real(np.sum(r0 * np.conj(r1))),
+                     np.sum(np.abs(r1) ** 2)]
+        quad_null[nui] = [np.sum(np.abs(y) ** 2), np.real(np.sum(y * np.conj(x))),
+                          np.sum(np.abs(x) ** 2)]
+        try:
+            diagnostics["cond"][nui] = np.linalg.cond(A)
+        except np.linalg.LinAlgError:
+            diagnostics["cond"][nui] = np.inf
+        diagnostics["rank"][nui] = rank
+        # the scale this bin alone would choose, to show whether one global tau fits
+        if quad[nui, 2] > 0:
+            diagnostics["alpha"][nui] = -quad[nui, 1] / quad[nui, 2]
+
+    total = quad[fitted].sum(axis=0)
+    alpha = float(-total[1] / total[2]) if (fit_tau and total[2] > 0) else 1.0
+
+    powers = np.array([1.0, 2 * alpha, alpha ** 2])
+    solution = np.zeros((g.SPEC_SIZE, N_EMISSIVITIES), dtype=complex)
+    coefficients = base + alpha * slope
+    if sum_zero:
+        solution[:, 1:] = coefficients
+        solution[:, 0] = -coefficients.sum(axis=1)
+    else:
+        solution[:] = coefficients
+    solution[~fitted] = 0
+
+    n_points = spec.shape[0]
+    diagnostics["chi2"][fitted] = quad[fitted] @ powers
+    diagnostics["chi2_null"][fitted] = quad_null[fitted] @ powers
+    diagnostics["rms_resid"][fitted] = np.sqrt(diagnostics["chi2"][fitted] / n_points)
+    diagnostics["rms_data"][fitted] = np.sqrt(diagnostics["chi2_null"][fitted] / n_points)
+
+    return solution, diagnostics, alpha
+
+
+def plot_solution(solution, published, band, published_band, frequencies, channel, mode, out_dir):
+    """
+    Fitted emissivities against the published ones, one panel per emitter.
+
+    The left column zooms on the published band, where the emissivities are physical.
+    The right column is |E| over everything that was fitted, on a log scale, which is
+    where to look for whether anything survives above the published band.
+    """
+    bins = np.arange(band.start, band.stop)
+    pub_bins = np.arange(published_band.start, published_band.stop)
+    fig, axes = plt.subplots(len(EMITTERS), 2, figsize=(12, 1.7 * len(EMITTERS)), sharex="col")
+
+    for i, name in enumerate(EMITTERS):
+        zoom, full = axes[i]
+
+        if np.any(published[pub_bins, i]):
+            zoom.plot(frequencies[pub_bins], published[pub_bins, i].real, color="k",
+                      label="published (real)")
+            zoom.plot(frequencies[pub_bins], published[pub_bins, i].imag, color="k",
+                      linestyle="dashed", label="published (imag)")
+            full.plot(frequencies[pub_bins], np.abs(published[pub_bins, i]), color="k",
+                      label="|published|")
+        zoom.plot(frequencies[pub_bins], solution[pub_bins, i].real, color="crimson",
+                  label="fitted (real)")
+        zoom.plot(frequencies[pub_bins], solution[pub_bins, i].imag, color="crimson",
+                  linestyle="dashed", label="fitted (imag)")
+        full.plot(frequencies[bins], np.abs(solution[bins, i]), color="crimson", label="|fitted|")
+
+        scale = np.abs(solution[pub_bins, i]).max()
+        if np.isfinite(scale) and scale > 0:
+            zoom.set_ylim(-1.5 * scale, 1.5 * scale)
+        zoom.axhline(0, color="grey", linewidth=0.5)
+        zoom.set_ylabel(name, fontsize="small")
+
+        full.set_yscale("log")
+        full.axvline(frequencies[published_band.stop - 1], color="steelblue", linewidth=0.8)
+
+    axes[0, 0].legend(fontsize="x-small", ncol=2)
+    axes[0, 1].legend(fontsize="x-small")
+    axes[0, 0].set_title("published band", fontsize="small")
+    axes[0, 1].set_title("everything fitted, |E| (blue line: top of the published band)",
+                         fontsize="small")
+    for ax in axes[-1]:
+        ax.set_xlabel("frequency [GHz]")
+    fig.suptitle(f"{channel}_{mode} emissivities")
+    fig.tight_layout()
+    path = f"{out_dir}/fitted_vs_published_{channel}_{mode}.png"
+    fig.savefig(path, dpi=120)
+    plt.close(fig)
+    print(f"  wrote {path}")
+
+
+_GRT_INTERPOLATORS = None
+
+
+def grt_interpolators():
+    """
+    Interpolators for the raw GRT series, cached across channels and modes.
+
+    Only the bolometers are read from here.  The other six emitter temperatures in
+    cal.npz have already been through the plateau fits, the self-heating de-biasing and
+    the noise-weighted average of the two sides in data_prep_v5, none of which this
+    reproduces; the bolometers are the one element that skips all of it, and are
+    interpolated there against the raw engineering times rather than the GRT times that
+    carry the time-domain-multiplexing offsets.
+    """
+    global _GRT_INTERPOLATORS
+    if _GRT_INTERPOLATORS is None:
+        from engineering_timing import get_interpolated_times as timing
+        grts, grt_times = timing.get_data()
+        _GRT_INTERPOLATORS = timing.get_interp(grts, grt_times)
+    return _GRT_INTERPOLATORS
+
+
+def bolometer_temperatures(times):
+    """
+    The four bolometer assembly temperatures interpolated onto `times`.
+
+    bol_assem_1..4 are the columns of the GRT block in channel order, the same indexing
+    data_prep_v5 uses (`grt["a_lo_bol_assem"][:, channel_i]`), so bol_assem_{k+1}
+    belongs to BOLOMETER_CHANNELS[k].  Only the low-current readings exist for the
+    bolometers; the two sides are averaged, as data_prep_v5 does.
+
+    Returns
+    -------
+    temps : (4, nrecord) array, in BOLOMETER_CHANNELS order
+    good : (nrecord,) bool array, False outside the span the GRTs cover
+    """
+    interpolators = grt_interpolators()
+    keys = [[f"{side}_lo_bol_assem_{k + 1}" for side in ("a", "b")]
+            for k in range(len(BOLOMETER_CHANNELS))]
+
+    # interp1d refuses to extrapolate, so restrict to the span every GRT covers.  For
+    # the calibration data this is the whole mission, and nothing is dropped.
+    covered = [interpolators[key].x for pair in keys for key in pair]
+    good = (times >= max(x[0] for x in covered)) & (times <= min(x[-1] for x in covered))
+
+    temps = np.full((len(BOLOMETER_CHANNELS), times.size), np.nan)
+    for k, pair in enumerate(keys):
+        temps[k, good] = np.mean([interpolators[key](times[good]) for key in pair], axis=0)
+
+    return temps, good
+
+
+def load_channel_mode(data, channel, mode, max_ifgs=None):
+    """Select the calibration records for one channel and mode, dropping bad ones."""
+    length_filter = data[f"mtm_length_{channel}"] == (0 if mode[0] == "s" else 1)
+    speed_filter = data[f"mtm_speed_{channel}"] == (0 if mode[1] == "s" else 1)
+    mode_filter = length_filter & speed_filter
+
+    fields = {}
+    for name in ("ifg", "adds_per_group", "sweeps", "bol_cmd_bias", "bol_volt", "gain"):
+        fields[name] = data[f"{name}_{channel}"][mode_filter]
+
+    bolometers, covered = bolometer_temperatures(data[f"midpoint_time_s_{channel}"])
+    temps = np.vstack([
+        [data[f"{name}_{channel}"][mode_filter] for name in
+         ("xcal_cone", "ical", "dihedral", "refhorn", "skyhorn", "collimator")],
+        bolometers[:, mode_filter],
+    ])
+
+    # Every emitter temperature has to be finite: the fit sums over all interferograms,
+    # so a single NaN makes the whole normal equation NaN.
+    finite = np.isfinite(temps).all(axis=0)
+    housekeeping = (np.isfinite(fields["bol_volt"]) & np.isfinite(fields["bol_cmd_bias"])
+                    & (fields["gain"] > 0) & (fields["sweeps"] > 0))
+    good = finite & housekeeping
+    uncovered = (~covered[mode_filter]).sum()
+    print(f"  {good.sum()} of {good.size} interferograms usable "
+          f"({(~good).sum()} dropped for NaN temperatures or bad housekeeping"
+          + (f", {uncovered} of them outside the GRT coverage" if uncovered else "") + ")")
+
+    if max_ifgs is not None and good.sum() > max_ifgs:
+        keep = np.flatnonzero(good)[:max_ifgs]
+        good = np.zeros_like(good)
+        good[keep] = True
+        print(f"  --max-ifgs: using the first {max_ifgs} of them")
+
+    fields = {name: value[good] for name, value in fields.items()}
+    # the bolometer model wants volts, not raw counts
+    fields["bol_cmd_bias"] = fields["bol_cmd_bias"] / BOL_CMD_BIAS_TO_VOLTS
+
+    return fields, temps[:, good]
+
+
+def report(solution, published, diagnostics, band, published_band, frequencies):
+    """
+    Print a per-bin summary of the fit and where it stops being meaningful.
+
+    Returns the headline numbers, for the summary table across channels and modes.
+    """
+    bins = np.arange(band.start, band.stop)
+    ratio = diagnostics["chi2"][bins] / diagnostics["chi2_null"][bins]
+    largest = np.abs(solution[bins]).max(axis=1)
+
+    # Every bin while there are few of them, otherwise every bin of the published band
+    # and a sample of the rest.
+    step = 1 if bins.size <= 60 else 4
+    shown = [nui for nui in bins if nui < published_band.stop or (nui - band.start) % step == 0]
+
+    print(f"\n  {'bin':>4} {'GHz':>8} {'cond(A)':>9} {'rank':>5} {'chi2/null':>10} "
+          f"{'|OTF|fit':>9} {'|OTF|pub':>9} {'max|E|':>9}")
+    for nui in shown:
+        marker = " " if nui < published_band.stop else "*"
+        print(f" {marker}{nui:>4} {frequencies[nui]:>8.1f} {diagnostics['cond'][nui]:>9.2e} "
+              f"{int(diagnostics['rank'][nui]):>5} "
+              f"{diagnostics['chi2'][nui] / diagnostics['chi2_null'][nui]:>10.4f} "
+              f"{np.abs(solution[nui, 0]):>9.2e} {np.abs(published[nui, 0]):>9.2e} "
+              f"{np.abs(solution[nui]).max():>9.2e}")
+    if step > 1:
+        print(f"  (* beyond the published band; every {step}th bin shown)")
+
+    print(f"\n  chi2 / chi2(no model) over all fitted bins: median {np.median(ratio):.4f}, "
+          f"worst {ratio.max():.4f}")
+
+    # If 1/(1 + i w tau) is the right shape, the scale each bin would pick on its own is
+    # the same everywhere; a trend with frequency means the response model is wrong.
+    pub_bins = np.arange(published_band.start, published_band.stop)
+    per_bin = diagnostics["alpha"][pub_bins]
+    if np.isfinite(per_bin).any():
+        half = pub_bins.size // 2
+        print(f"  tau scale each bin would choose on its own, over the published band: median "
+              f"{np.nanmedian(per_bin):.3f} (lower half {np.nanmedian(per_bin[:half]):.3f}, "
+              f"upper half {np.nanmedian(per_bin[half:]):.3f})")
+    print(f"  condition number: median {np.median(diagnostics['cond'][bins]):.2e}, "
+          f"worst {diagnostics['cond'][bins].max():.2e}")
+
+    # How far up the spectrum the fit is still saying something: the model has to
+    # explain most of the variance and the emissivities have to stay physical.
+    usable = (ratio < 0.5) & (largest <= 1)
+    print(f"  bins with chi2/null < 0.5 and |E| <= 1: {usable.sum()} of {bins.size}")
+    # The contiguous run containing the published band is what a user can actually take,
+    # rather than isolated bins that pass the test by accident.
+    if usable.any():
+        first = int(np.argmax(usable))
+        length = usable.size - first if usable[first:].all() else int(np.argmin(usable[first:]))
+        low, high = bins[first], bins[first + length - 1]
+        print(f"  contiguous from bin {low} ({frequencies[low]:.1f} GHz) to bin {high} "
+              f"({frequencies[high]:.1f} GHz); the published model runs from bin "
+              f"{published_band.start} ({frequencies[published_band.start]:.1f} GHz) to bin "
+              f"{published_band.stop - 1} ({frequencies[published_band.stop - 1]:.1f} GHz)")
+    else:
+        low = high = band.start
+        print("  no bin passes that test")
+
+    # A differential instrument sees nothing when every emitter is at the same
+    # temperature, so the emissivities should sum to ~0 (the published ones do).
+    print(f"  |sum_i E_i|: fitted median {np.median(np.abs(solution[bins].sum(axis=1))):.2e}, "
+          f"published {np.median(np.abs(published[bins].sum(axis=1))):.2e}")
+
+    in_band = np.isin(bins, pub_bins)
+    otf_error = (np.abs(solution[pub_bins, 0] - published[pub_bins, 0])
+                 / np.abs(published[pub_bins, 0]))
+    low_frequency = frequencies[pub_bins] < 250
+    print(f"  over the published band, |OTF_fit - OTF_pub| / |OTF_pub|: median "
+          f"{np.median(otf_error):.3f}, below 250 GHz "
+          f"{np.median(otf_error[low_frequency]):.3f}")
+
+    return {
+        "usable_low_bin": int(low),
+        "usable_top_bin": int(high),
+        "usable_top_ghz": float(frequencies[high]),
+        "published_top_bin": int(published_band.stop - 1),
+        "published_top_ghz": float(frequencies[published_band.stop - 1]),
+        "chi2_ratio": float(np.median(ratio[in_band])) if in_band.any() else float("nan"),
+        "otf_error": float(np.median(otf_error)),
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Fit optical transfer function.")
+    parser.add_argument("--channels", nargs="+", default=list(g.CHANNELS),
+                        help="Channels to fit (default: all four).")
+    parser.add_argument("--modes", nargs="+", default=list(g.MODES),
+                        help="Modes to fit (default: all of g.MODES).")
+    parser.add_argument("--max-ifgs", type=int, default=None,
+                        help="Fit only the first N usable interferograms (for quick tests).")
+    parser.add_argument("--weight", action="store_true",
+                        help="Weight interferograms by their out-of-band noise.")
+    parser.add_argument("--rcond", type=float, default=1e-4,
+                        help="lstsq cutoff for singular values, relative to the largest. Several "
+                             "emitter temperatures track each other closely -- the four "
+                             "bolometers above all -- so some directions of the fit are "
+                             "unconstrained; discarding them costs nothing in chi^2 and stops the "
+                             "emissivities running away. Pass 0 to keep every direction.")
+    parser.add_argument("--no-sum-zero", dest="sum_zero", action="store_false",
+                        help="Do not constrain the emissivities to sum to zero.")
+    parser.add_argument("--no-fit-tau", dest="fit_tau", action="store_false",
+                        help="Keep the published bolometer time constant instead of fitting a "
+                             "scale factor for it alongside the emissivities.")
+    parser.add_argument("--published-band", action="store_true",
+                        help="Fit only the bins the published model covers, instead of every bin "
+                             "up to Nyquist.")
+    parser.add_argument("--out-dir", default="calibration/output", help="Where to write results.")
+    args = parser.parse_args()
+
+    os.makedirs(args.out_dir, exist_ok=True)
+
+    data = np.load(f"{g.PREPROCESSED_DATA_PATH}cal.npz")
+    print(f"Data loaded from {g.PREPROCESSED_DATA_PATH}cal.npz")
+
+    fnyq = gen_nyquistl("../reference/fex_samprate.txt", "../reference/fex_nyquist.txt", "int")
+
+    summary = {}
+    for channel, mode in channel_modes(args.channels, args.modes):
+        print(f"\n{'=' * 70}\n{channel}_{mode}\n{'=' * 70}")
+        start = time.time()
+
+        fields, temps = load_channel_mode(data, channel, mode, args.max_ifgs)
+        if temps.shape[1] < len(EMITTERS):
+            print("  not enough usable interferograms to fit; skipping")
+            continue
+
+        frequencies = utils.generate_frequencies(channel, mode, g.SPEC_SIZE)
+        frec = 4 * (g.CHANNELS[channel] % 2) + g.MODES[mode]
+        fnyq_icm = fnyq["icm"][frec]
+
+        published, published_band = published_emissivities(channel, mode)
+        # Bin 0 is the interferogram mean and has no Planck function to fit against
+        # (P(0, T) is 0/0), so the fit starts at bin 1.
+        band = published_band if args.published_band else slice(1, g.SPEC_SIZE)
+        print(f"  fitting bins {band.start}-{band.stop - 1} "
+              f"({frequencies[band.start]:.1f}-{frequencies[band.stop - 1]:.1f} GHz); the "
+              f"published model covers bins {published_band.start}-{published_band.stop - 1}")
+        print("  emitter temperature correlations (a pair at 1.000 cannot be separated):")
+        for row, name in zip(np.corrcoef(temps), EMITTERS):
+            print(f"    {name:>14}  " + " ".join(f"{value:6.3f}" for value in row))
+
+        print("  transforming interferograms...")
+        spec = raw_spectra(fields["ifg"], channel, mode, fields["adds_per_group"],
+                           fields["bol_cmd_bias"], fields["bol_volt"],
+                           temps[bolometer_row(temps, channel)], fnyq_icm,
+                           fields["gain"], fields["sweeps"])
+
+        finite = np.isfinite(spec[:, band]).all(axis=1)
+        if not finite.all():
+            print(f"  dropping {(~finite).sum()} interferograms with non-finite spectra")
+            spec, temps = spec[finite], temps[:, finite]
+
+        weights = noise_weights(spec, published_band) if args.weight else None
+        if weights is not None:
+            usable = weights > 0
+            if not usable.all():
+                print(f"  dropping {(~usable).sum()} interferograms with no noise estimate")
+                spec, temps, weights = spec[usable], temps[:, usable], weights[usable]
+
+        memory = get_memory_usage()
+        if memory:
+            print(f"  memory in use: {memory:.2f} GB")
+
+        tau = time_constants(channel, mode, fields["bol_cmd_bias"], fields["bol_volt"],
+                             temps[bolometer_row(temps, channel)])
+        omega = audio_frequencies(channel, mode)
+        print(f"  published time constant: median {np.median(tau) * 1e3:.2f} ms, "
+              f"w*tau at the top of the published band "
+              f"{omega[published_band.stop - 1] * np.median(tau):.3f}")
+
+        print(f"  solving {band.stop - band.start} linear least-squares problems "
+              f"({spec.shape[0]} interferograms x {len(EMITTERS)} emissivities"
+              + (" + tau)..." if args.fit_tau else ")..."))
+        solution, diagnostics, alpha = fit_band(spec, temps, frequencies, band, tau, omega,
+                                                weights, args.rcond, args.sum_zero,
+                                                args.fit_tau)
+        if args.fit_tau:
+            print(f"  fitted time constant scale: alpha = {alpha:.4f} "
+                  f"(alpha = 1 is the published tau), so tau = {np.median(tau) * alpha * 1e3:.2f} "
+                  f"ms at the median")
+
+        summary[f"{channel}_{mode}"] = report(solution, published, diagnostics, band,
+                                              published_band, frequencies)
+        summary[f"{channel}_{mode}"]["interferograms"] = spec.shape[0]
+        summary[f"{channel}_{mode}"]["alpha"] = alpha
+        plot_solution(solution, published, band, published_band, frequencies, channel, mode,
+                      args.out_dir)
+
+        path = f"{args.out_dir}/fitted_emissivities_{channel}_{mode}.npy"
+        np.save(path, solution)
+        print(f"  wrote {path}")
+
+        # The emissivities are only consistent with a bolometer response built from
+        # alpha * tau, so anything re-deriving residuals from them needs alpha too.
+        path = f"{args.out_dir}/fit_diagnostics_{channel}_{mode}.npz"
+        np.savez(path, tau_scale=alpha, band=[band.start, band.stop],
+                 published_band=[published_band.start, published_band.stop], **diagnostics)
+        print(f"  wrote {path}")
+        print(f"  total time: {time.time() - start:.1f} s")
+
+        del spec, temps, fields, solution
+
+    if len(summary) > 1:
+        print(f"\n{'=' * 70}\nAll channels and modes\n{'=' * 70}")
+        print(f"  {'':>8} {'ifgs':>7} {'published band':>16} {'usable to':>16} "
+              f"{'chi2/null':>10} {'|dOTF|/OTF':>11} {'tau scale':>10}")
+        for name, row in summary.items():
+            print(f"  {name:>8} {row['interferograms']:>7} "
+                  f"{row['published_top_bin']:>5} {row['published_top_ghz']:>9.1f} GHz "
+                  f"{row['usable_top_bin']:>5} {row['usable_top_ghz']:>9.1f} GHz "
+                  f"{row['chi2_ratio']:>10.4f} {row['otf_error']:>11.3f} {row['alpha']:>10.4f}")
+        print("\n  'usable to' is the top of the contiguous run of bins where the model explains\n"
+              "  more than half the variance and every |E| <= 1; chi2/null and |dOTF|/OTF are\n"
+              "  medians over the published band.")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Fit optical transfer function.")
-    parser.add_argument(
-        "--n",
-        type=int,
-        default=None,
-        help="IFG index to fit (if not provided, fit all frequencies).",
-    )
-    args = parser.parse_args()
-    n = args.n
-
-    channels = ["ll"]
-    modes = ["ss"]
-
-    data = np.load(f"{g.PREPROCESSED_DATA_PATH}cal.npz", "r")
-    print(f"Data loaded from {g.PREPROCESSED_DATA_PATH}cal.npz")
-    print("Preparing data for fitting...")
-    for channel in channels:
-        mtm_length = data[f"mtm_length_{channel}"]
-        mtm_speed = data[f"mtm_speed_{channel}"]
-
-        for mode in modes:
-            if mode == "lf" and (channel[1] == "h"):
-                continue
-            if mode[0] == "s":
-                length_filter = mtm_length == 0
-            else:
-                length_filter = mtm_length == 1
-            if mode[1] == "s":
-                speed_filter = mtm_speed == 0
-            else:
-                speed_filter = mtm_speed == 1
-
-            mode_filter = length_filter & speed_filter
-
-            # if n is chosen, load only the needed data
-            if n is None:
-                ifg = data[f"ifg_{channel}"][mode_filter]
-                xcal = data[f"xcal_cone_{channel}"][mode_filter]  # TODO: update this
-                ical = data[f"ical_{channel}"][mode_filter]
-                dihedral = data[f"dihedral_{channel}"][mode_filter]
-                refhorn = data[f"refhorn_{channel}"][mode_filter]
-                skyhorn = data[f"skyhorn_{channel}"][mode_filter]
-                collimator = data[f"collimator_{channel}"][mode_filter]
-                # TODO: fit for all bolometers
-                bol = data[f"bolometer_{channel}"][mode_filter]
-
-                adds_per_group = data[f"adds_per_group_{channel}"][mode_filter]
-                sweeps = data[f"sweeps_{channel}"][mode_filter]
-
-                bol_cmd_bias = data[f"bol_cmd_bias_{channel}"][mode_filter]
-                bol_volt = data[f"bol_volt_{channel}"][mode_filter]
-                gain = data[f"gain_{channel}"][mode_filter]
-            else:
-                ifg = data[f"ifg_{channel}"][mode_filter][n]
-                xcal = data[f"xcal_cone_{channel}"][mode_filter][n]  # TODO: update this
-                ical = data[f"ical_{channel}"][mode_filter][n]
-                dihedral = data[f"dihedral_{channel}"][mode_filter][n]
-                refhorn = data[f"refhorn_{channel}"][mode_filter][n]
-                skyhorn = data[f"skyhorn_{channel}"][mode_filter][n]
-                collimator = data[f"collimator_{channel}"][mode_filter][n]
-                bol = data[f"bolometer_{channel}"][mode_filter][n]
-
-            # plot a random ifg to check
-            n = np.random.randint(ifg.shape[0]) if ifg.ndim == 2 else n
-
-            plt.plot(ifg[n] if ifg.ndim == 2 else ifg)
-            plt.title(f"Random IFG at index {n}")
-            plt.savefig(f"calibration/output/random_ifgs/{n}.png")
-            print(f"Random IFG plotted and saved for index {n} in calibration/output/random_ifgs/"
-                  f"{n}.png")
-
-            # print(f"data keys: {list(data.keys())}")
-
-            # TODO: fit for temp weight coefficients too
-            # xcal = (data["a_xcal"][:] + data["b_xcal"][:]) / 2
-            # ical = (data["a_ical"][:] + data["b_ical"][:]) / 2
-            # dihedral = (data["a_dihedral"][:] + data["b_dihedral"][:]) / 2
-            # refhorn = (data["a_refhorn"][:] + data["b_refhorn"][:]) / 2
-            # skyhorn = (data["a_skyhorn"][:] + data["b_skyhorn"][:]) / 2
-            # collimator = (data["a_collimator"][:] + data["b_collimator"][:]) / 2
-            # bolometer_ll = (data["a_bol_assem_ll"][:] + data["b_bol_assem_ll"][:]) / 2
-            # bolometer_lh = (data["a_bol_assem_lh"][:] + data["b_bol_assem_lh"][:]) / 2
-            # bolometer_rl = (data["a_bol_assem_rl"][:] + data["b_bol_assem_rl"][:]) / 2
-            # bolometer_rh = (data["a_bol_assem_rh"][:] + data["b_bol_assem_rh"][:]) / 2
-
-            temps = np.array([xcal, ical, dihedral, refhorn, skyhorn, collimator, bol])
-
-            frequencies = utils.generate_frequencies(channel, mode, 257)
-
-            fnyq = gen_nyquistl("../reference/fex_samprate.txt", "../reference/fex_nyquist.txt",
-                                "int")
-            frec = 4 * (g.CHANNELS[channel] % 2) + g.MODES[mode]
-            fnyq_icm = fnyq["icm"][frec]
-
-            # 10 emissivities to fit
-            solution = np.zeros((g.SPEC_SIZE, 10), dtype=complex)  
-
-            # Determine number of processes to use
-            n_processes = cpu_count() 
-            #n_processes = 1
-            print(f"Using {n_processes} CPU cores for parallel processing")
-            
-            mem = get_memory_usage()
-            if mem:
-                print(f"Memory before parallel processing: {mem:.2f} GB")
-
-            cutoff = 5 if mode[1] == "s" else 7
-
-            start0 = time.time()
-            print(f"Starting parallel optimization for {g.SPEC_SIZE} frequencies...")
-
-            # Parallel processing with initializer to avoid copying large arrays
-            with Pool(processes=n_processes, initializer=_init_worker,
-                      initargs=(ifg, channel, mode, gain, sweeps, bol_cmd_bias, bol_volt, temps,
-                                adds_per_group, fnyq_icm, frequencies, cutoff)) as pool:
-                # Use imap to maintain order and track progress
-                results = []
-                for i, result in enumerate(pool.imap(fit_single_frequency,
-                    range(1,g.SPEC_SIZE)), 1):
-                    results.append(result)
-                    # Print progress every 10 frequencies or at the end
-                    if i % 10 == 0 or i == g.SPEC_SIZE:
-                        elapsed = time.time() - start0
-                        rate = i / elapsed
-                        remaining = (g.SPEC_SIZE - i) / rate if rate > 0 else 0
-                        print(f"Progress: {i}/{g.SPEC_SIZE} frequencies complete"
-                              f" ({i/g.SPEC_SIZE*100:.1f}%) | Elapsed: {elapsed:.1f}s | ETA: "
-                              f"{remaining:.1f}s")
-
-            # Collect results
-            failed_fits = 0
-            for nui, emissivities in results:
-                solution[nui] = emissivities
-
-            end_time = time.time()
-            total_seconds = end_time - start0
-
-            print(f"\n{'='*60}")
-            print(f"Optimization Complete!")
-            print(f"{'='*60}")
-            print(f"Total time taken: {total_seconds:.2f} seconds ({total_seconds/60:.2f} minutes)")
-            print(f"Average time per frequency: {total_seconds/g.SPEC_SIZE:.2f} seconds")
-            print(f"Speed improvement: {149.78/(total_seconds/g.SPEC_SIZE):.1f}x faster than before")
-
-            # save solution
-            np.save(f"calibration/output/fitted_emissivities_{channel}_{mode}.npy", solution)
-            
-            # Explicit cleanup to free memory before next iteration
-            del ifg, xcal, ical, dihedral, refhorn, skyhorn, collimator, bol
-            del temps, frequencies, solution, results
-            if 'adds_per_group' in locals():
-                del adds_per_group, sweeps, bol_cmd_bias, bol_volt, gain
-            gc.collect()
-            
-            mem = get_memory_usage()
-            if mem:
-                print(f"Memory after cleanup for {channel}_{mode}: {mem:.2f} GB")
-            
-            n = None
+    main()
