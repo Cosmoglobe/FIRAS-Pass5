@@ -1,3 +1,5 @@
+import os
+
 import healpy as hp
 import matplotlib.pyplot as plt
 import numpy as np
@@ -5,7 +7,6 @@ from scipy.optimize import minimize
 
 import globals as g
 from utils import my_utils as utils
-import os
 
 T_CMB = 2.72548  # Fixsen 2009
 
@@ -37,24 +38,21 @@ for mode in g.MODES_PLOT:
                              mode_data[f"gal_lat_{channel}"], lonlat=True).astype(int)
         f_ghz = utils.generate_frequencies(channel, mode)
 
-        print(f"Calculating BB curve for {channel.upper()}{mode.upper()}...")
+        # print(f"Calculating BB curve for {channel.upper()}{mode.upper()}...")
         
-        dust = (
-            optical_depth_nu0
-            * utils.planck(f_ghz, t_dust)
-            * (f_ghz / nu0_dust) ** beta_dust
-        )
+        dust = (optical_depth_nu0 * utils.planck(f_ghz, t_dust) * (f_ghz / nu0_dust) ** beta_dust)
 
         hpxmap = np.zeros((g.NPIX, len(f_ghz)))
         data_density = np.zeros(g.NPIX)
 
         for todi in range(len(sky)):
-            hpxmap[pix_gal[todi]] += np.abs(sky[todi])
+            hpxmap[pix_gal[todi]] += (sky[todi]).real
             data_density[pix_gal[todi]] += 1
 
         mask_nodata = data_density == 0
-        
-        m = (hpxmap - dust) / data_density[:, np.newaxis]
+
+        m = np.zeros_like(hpxmap)
+        m[~mask_nodata] = (hpxmap[~mask_nodata] - dust) / data_density[~mask_nodata, np.newaxis]
 
         mask_total = mask_nodata[:, np.newaxis] | mask_gal[:, np.newaxis]
         m = np.where(mask_total == 1, np.nan, m)
@@ -71,29 +69,25 @@ for mode in g.MODES_PLOT:
 
         os.system(f"rm -rf {g.SAVE_PATH}/maps/bb_temp/{channel}_{mode}.png")
         fig1 = plt.figure(1)
-        hp.mollview(
-            (temps - g.T_CMB)*1e3,
-            title=f"{channel.upper()}{mode.upper()} Deviation from Fixsen 2009 CMB temperature",
-            unit="mK",
-            min=-100,
-            max=100,
-            cmap="seismic",
-            norm="linear",
-            fig=1,
-        )
+        hp.mollview((temps - g.T_CMB)*1e3,
+                    title=f"{channel.upper()}{mode.upper()} Deviation from Fixsen 2009 CMB temperature",
+                    unit="mK", min=-100, max=100, cmap="seismic", norm="linear", fig=1)
         plt.savefig(f"{g.SAVE_PATH}/maps/bb_temp/{channel}_{mode}.png")
         plt.close(fig1)
+        print(f"Saved BB temperature map for {channel.upper()}{mode.upper()} to {g.SAVE_PATH}maps/bb_temp/{channel}_{mode}.png")
 
         # get rid of 5sigma outliers
         std = np.nanstd(temps)
         median = np.nanmedian(temps)
-        print(f"Median temperature: {median:.5f} K, Standard deviation: {std:.5f} K")
+        # print(f"Median temperature: {median:.5f} K, Standard deviation: {std:.5f} K")
         dist = np.abs(temps - median) / std
         temps = np.where(dist > 5, np.nan, temps)
         bb_temp = np.nanmean(temps)
+        np.save(f"./../output/data/bb_temp/{channel}_{mode}.npy", bb_temp)
 
         m_excl_outliers = np.where(dist[:, np.newaxis] > 5, np.nan, m)
         bb_curve_data = np.nanmean(m_excl_outliers, axis=0)
+        np.save("./../output/data/bb_curve_data.npy", bb_curve_data)
 
         # plt.plot(f_ghz, bb_curve, label="Data")
         tf = minimize(utils.residuals, t0, args=(f_ghz, bb_curve_data)).x[0]
@@ -101,30 +95,20 @@ for mode in g.MODES_PLOT:
         
         os.remove(f"{g.SAVE_PATH}/plots/bb_curve/{channel}_{mode}.png")
         fig2 = plt.figure(2)
-        plt.plot(
-            f_ghz,
-            utils.planck(f_ghz, bb_temp),
-            label=f"Averaged after fitting: {bb_temp:.5f} K",
-        )
-        plt.plot(
-            f_ghz,
-            utils.planck(f_ghz, tf),
-            label=f"Fitting after averaging: {tf:.5f} K",
-        )
+        plt.plot(f_ghz, utils.planck(f_ghz, bb_temp),
+                 label=f"Averaged after fitting: {bb_temp:.5f} K")
+        plt.plot(f_ghz, utils.planck(f_ghz, tf), label=f"Fitting after averaging: {tf:.5f} K")
         plt.plot(f_ghz, bb_curve_data, label="Data")
-        plt.plot(
-            f_ghz,
-            utils.planck(f_ghz, t0),
-            label="Original",
-        )
+        plt.plot(f_ghz, utils.planck(f_ghz, t0), label="Original")
         # plt.plot(f_ghz, dust, label="Dust")
         plt.xlabel("Frequency [GHz]")
         plt.ylabel("Brightness [MJy/sr]")
         plt.title(f"{channel.upper()}{mode.upper()}")
         plt.grid()
         plt.legend()
-        plt.savefig(f"{g.SAVE_PATH}/plots/bb_curve/{channel}_{mode}.png")
+        plt.savefig(f"{g.SAVE_PATH}plots/bb_curve/{channel}_{mode}.png")
         plt.close(fig2)
+        print(f"Saved BB curve for {channel.upper()}{mode.upper()} to {g.SAVE_PATH}plots/bb_curve/{channel}_{mode}.png")
 
         # plot also subtracted
         os.remove(f"{g.SAVE_PATH}/plots/bb_curve/{channel}_{mode}_difference.png")
@@ -134,5 +118,6 @@ for mode in g.MODES_PLOT:
         plt.xlabel("Frequency [GHz]")
         plt.ylabel("Brightness [MJy/sr]")
         plt.title(f"{channel.upper()}{mode.upper()} difference from original")
-        plt.savefig(f"{g.SAVE_PATH}/plots/bb_curve/{channel}_{mode}_difference.png")
+        plt.savefig(f"{g.SAVE_PATH}plots/bb_curve/{channel}_{mode}_difference.png")
         plt.close(fig3)
+        print(f"Saved BB curve difference for {channel.upper()}{mode.upper()} to {g.SAVE_PATH}plots/bb_curve/{channel}_{mode}_difference.png")
