@@ -67,4 +67,6 @@ MODES = {"ss": 0, "lf": 3}  # can change when i have the new cal models
 # verbose = 1: print statements for major steps in the pipeline
 # verbose = 2: print statements for all steps in the pipeline
 # verbose = 3: includes intermediate plots
-VERBOSE = 1
+VERBOSE = -1
+
+COLORS = ["#044b97", "#e77e15", "#43b3de", "#f5dc65", "#cbdfdd"]

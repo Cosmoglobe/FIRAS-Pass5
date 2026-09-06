@@ -59,21 +59,26 @@ en_analog = fdq_eng["en_analog"]
 grt = en_analog["grt"]
 grts, grt_times = get_data()
 
+sides = ["a", "b"]
+hilos = ["lo", "hi"]
+hilos_string = ["Low", "High"]
 if g.VERBOSE == -1:
     print("Plotting raw temperatures for all thermometers")
     xsize = {"ical": 10000, "xcal_cone": 1000}
     for element in ["ical"]:
         for i in range(0, len(grts[f"a_hi_{element}"]), xsize[element]):        
             fig, ax = plt.subplots(figsize=(10, 6))                
-            for side in ["a", "b"]:
-                for hilo in ["lo", "hi"]:
+            for side in sides:
+                for hilo_i, hilo in enumerate(hilos):
                     ax.plot(grt_times[f"{side}_{hilo}_{element}"][i:i+xsize[element]],
-                            grts[f"{side}_{hilo}_{element}"][i:i+xsize[element]], label=f"{side}_{hilo}")
+                            grts[f"{side}_{hilo}_{element}"][i:i+xsize[element]],
+                            label=f"Side {side.upper()} - {hilos_string[hilo_i]} Current",
+                            color=g.COLORS[sides.index(side) * 2 + hilos.index(hilo)])
             ax.set_xlabel("Time")
             ax.set_ylabel("Temperature (K)")
             ax.set_title(f"Raw GRT Temperatures Over Time - {element.upper()}")
             ax.legend()
-            plt.savefig(f"{g.SAVE_PATH}/plots/thermometers/01_raw_temperatures/{element}_{i}.png")
+            plt.savefig(f"../output/plots/thermometers/01_raw_temperatures/{element}_{i}.png")
             plt.close(fig)
 
 interpolators = get_interp(grts, grt_times)
@@ -94,7 +99,6 @@ std_weight = {}
 low_temps = {}
 high_temps = {}
 elements = ["ical", "xcal_cone", "refhorn", "skyhorn"]
-sides = ["a", "b"]
 
 cal_mask = {}
 sky_mask = {}
@@ -192,8 +196,8 @@ for channel, channel_i in g.CHANNELS.items():
     # the dihdral operates at different temperatures and thus we use a different method for it
     # same for the collimator and mirror
 
-    print(f"Testing new way for de-biasing temperatures for ICAL and using the previous one for the rest")
-    print(f"Taking the average of both sides")
+    print("Testing new way for de-biasing temperatures for ICAL and using the previous one for the rest")
+    print("Taking the average of both sides")
 
     # join calibration and sky times for interpolation (optimized)
     print("Joining and sorting calibration and sky times for interpolation")
@@ -231,10 +235,12 @@ for channel, channel_i in g.CHANNELS.items():
                         continue
                     fig_ax_pairs[i//xsize[element]][1].plot(midpoint_time_s[channel][i:i+xsize[element]],
                                                    temps[f"{side}_lo_{element}_{channel}"][i:i+xsize[element]],
-                                                   label=f"{side}_lo")
+                                                   label=f"Side {side.upper()} - Low Current",
+                                                   color=g.COLORS[sides.index(side) * 2])
                     fig_ax_pairs[i//xsize[element]][1].plot(midpoint_time_s[channel][i:i+xsize[element]],
                                                    temps[f"{side}_hi_{element}_{channel}"][i:i+xsize[element]],
-                                                   label=f"{side}_hi")
+                                                   label=f"Side {side.upper()} - High Current",
+                                                   color=g.COLORS[sides.index(side) * 2 + 1])
                     fig_ax_pairs[i//xsize[element]][1].set_xlabel("Time")
                     fig_ax_pairs[i//xsize[element]][1].set_ylabel("Temperature (K)")
                     fig_ax_pairs[i//xsize[element]][1].set_title(f"Interpolated Temperatures for {element.upper()} - RH")
@@ -267,7 +273,7 @@ for channel, channel_i in g.CHANNELS.items():
 
         if channel == "rh" and g.VERBOSE == -1 and (element == "ical" or element == "xcal_cone"):
             for i in range(0, len(temps[f"{side}_hi_{element}_{channel}"]), xsize[element]):
-                fig_ax_pairs[i//xsize[element]][0].savefig(f"{g.SAVE_PATH}/plots/thermometers/02_interpolated/{element}_{i}.png")
+                fig_ax_pairs[i//xsize[element]][0].savefig(f"../output/plots/thermometers/02_interpolated/{element}_{i}.png")
                 plt.close(fig_ax_pairs[i//xsize[element]][0])
 
 # join the results for the same thermometer in all of the channels
@@ -286,7 +292,7 @@ lo_plot, hi_plot = {}, {}
 for channel, channel_i in g.CHANNELS.items():
     for element in elements:
         if g.VERBOSE == -1 and (element in ["ical", "xcal_cone"]):
-            nplots = math.ceil(len(temps[f"a_lo_ical_rh"]) / xsize[element])
+            nplots = math.ceil(len(temps["a_lo_ical_rh"]) / xsize[element])
             fig_ax_pairs = [plt.subplots(figsize=(10, 6)) for _ in range(nplots)]
 
             fig_ax_pairs_2 = [plt.subplots(figsize=(10, 6)) for _ in range(nplots)]
@@ -317,10 +323,12 @@ for channel, channel_i in g.CHANNELS.items():
                         continue
                     fig_ax_pairs[i//xsize[element]][1].plot(midpoint_time_s[channel][i:i+xsize[element]],
                                                    lo_plot[f"{side}_{element}_{channel}"][i:i+xsize[element]],
-                                                   label=f"{side}_lo")
+                                                   label=f"Side {side.upper()} - Low Current",
+                                                   color=g.COLORS[sides.index(side) * 2])
                     fig_ax_pairs[i//xsize[element]][1].plot(midpoint_time_s[channel][i:i+xsize[element]],
                                                    hi_plot[f"{side}_{element}_{channel}"][i:i+xsize[element]],
-                                                   label=f"{side}_hi_debiased")
+                                                   label=f"Side {side.upper()} - High Current",
+                                                   color=g.COLORS[sides.index(side) * 2 + 1])
                     fig_ax_pairs[i//xsize[element]][1].set_xlabel("Time")
                     fig_ax_pairs[i//xsize[element]][1].set_ylabel("Temperature (K)")
                     fig_ax_pairs[i//xsize[element]][1].set_title(f"Debiased High Current Temperatures for {element.upper()} - RH")
@@ -343,8 +351,8 @@ for channel, channel_i in g.CHANNELS.items():
                             y_lim[i//xsize[element]][1] = max(y_lim[i//xsize[element]][1], np.max(valid))
 
         if channel == "rh" and g.VERBOSE == -1 and (element == "ical" or element == "xcal_cone"):
-            for i in range(0, len(lo_plot), xsize[element]):
-                fig_ax_pairs[i//xsize[element]][0].savefig(f"{g.SAVE_PATH}/plots/thermometers/03_debiased/{element}_{i}.png")
+            for i in range(0, len(lo_plot[f"{side}_{element}_{channel}"]), xsize[element]):
+                fig_ax_pairs[i//xsize[element]][0].savefig(f"../output/plots/thermometers/03_debiased/{element}_{i}.png")
                 plt.close(fig_ax_pairs[i//xsize[element]][0])
 
                 fig_ax_pairs_2[i//xsize[element]][0].savefig(f"{g.SAVE_PATH}/plots/thermometers/04_combined/{element}_{i}.png")    

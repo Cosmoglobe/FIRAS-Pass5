@@ -3,6 +3,7 @@ Script to take the previously generated sky spectra (sky.npy) and plot a map wit
 """
 
 import os
+import time
 from pathlib import Path
 
 import astropy.units as u
@@ -15,8 +16,6 @@ from healpy.rotator import Rotator
 
 import globals as g
 import utils.my_utils as utils
-
-import time
 
 t1 = time.time()
 
@@ -37,9 +36,7 @@ f_ghz = {}
 for channel in g.CHANNELS_PLOT:
     for mode in g.MODES_PLOT:
         if not (mode == "lf" and (channel == "lh" or channel == "rh")):
-            data = np.load(
-                f"{g.PROCESSED_DATA_PATH}sky_{channel}_{mode}.npz", allow_pickle=True
-            )
+            data = np.load(f"{g.PROCESSED_DATA_PATH}sky_{channel}_{mode}.npz", allow_pickle=True)
 
             sky = data[f"sky_{channel}"]
             # scan = data[f"scan_{mode}"]
