@@ -387,23 +387,23 @@ for channel, channel_i in g.CHANNELS.items():
             cal_data[f"{element}_{channel}"] = all_data[f"{element}_{channel}"][cal_mask[channel]]
             sky_data[f"{element}_{channel}"] = all_data[f"{element}_{channel}"][sky_mask[channel]]
 
-    temps[f"a_lo_dihedral"] = interpolators[f"a_lo_dihedral"](midpoint_time_s[channel])
-    temps[f"b_lo_dihedral"] = interpolators[f"b_lo_dihedral"](midpoint_time_s[channel])
-    std_weight[f"a_lo_dihedral"] = stats.estimate_noise(temps[f"a_lo_dihedral"], "dihedral")
-    std_weight[f"b_lo_dihedral"] = stats.estimate_noise(temps[f"b_lo_dihedral"], "dihedral")
-    all_data[f"dihedral_{channel}"] = stats.weighted_average(temps[f"a_lo_dihedral"],
-                                                             temps[f"b_lo_dihedral"],
-                                                             std_weight[f"a_lo_dihedral"],
-                                                             std_weight[f"b_lo_dihedral"])
+    temps["a_lo_dihedral"] = interpolators["a_lo_dihedral"](midpoint_time_s[channel])
+    temps["b_lo_dihedral"] = interpolators["b_lo_dihedral"](midpoint_time_s[channel])
+    std_weight["a_lo_dihedral"] = stats.estimate_noise(temps["a_lo_dihedral"], "dihedral")
+    std_weight["b_lo_dihedral"] = stats.estimate_noise(temps["b_lo_dihedral"], "dihedral")
+    all_data[f"dihedral_{channel}"] = stats.weighted_average(temps["a_lo_dihedral"],
+                                                             temps["b_lo_dihedral"],
+                                                             std_weight["a_lo_dihedral"],
+                                                             std_weight["b_lo_dihedral"])
 
     # TODO: finish the weights of the sides down here
-    temps[f"a_lo_collimator"] = interpolators[f"a_lo_collimator"](midpoint_time_s[channel])
-    all_data[f"collimator_{channel}"] = temps[f"a_lo_collimator"]
+    temps["a_lo_collimator"] = interpolators["a_lo_collimator"](midpoint_time_s[channel])
+    all_data[f"collimator_{channel}"] = temps["a_lo_collimator"]
 
-    temps[f"a_lo_mirror"] = interpolators[f"a_lo_mirror"](midpoint_time_s[channel])
-    temps[f"b_lo_mirror"] = interpolators[f"b_lo_mirror"](midpoint_time_s[channel])
-    std_weight[f"a_lo_mirror"] = stats.estimate_noise(temps[f"a_lo_mirror"], "mirror")
-    std_weight[f"b_lo_mirror"] = stats.estimate_noise(temps[f"b_lo_mirror"], "mirror")
+    temps["a_lo_mirror"] = interpolators["a_lo_mirror"](midpoint_time_s[channel])
+    temps["b_lo_mirror"] = interpolators["b_lo_mirror"](midpoint_time_s[channel])
+    std_weight["a_lo_mirror"] = stats.estimate_noise(temps["a_lo_mirror"], "mirror")
+    std_weight["b_lo_mirror"] = stats.estimate_noise(temps["b_lo_mirror"], "mirror")
     
     all_data[f"mirror_{channel}"] = stats.weighted_average(temps[f"a_lo_mirror"],
                                                             temps[f"b_lo_mirror"],
