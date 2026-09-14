@@ -576,6 +576,8 @@ def load_channel_mode(data, channel, mode, max_ifgs=None):
     # the bolometer model wants volts, not raw counts
     fields["bol_cmd_bias"] = fields["bol_cmd_bias"] / BOL_CMD_BIAS_TO_VOLTS
 
+    # let's also drop all of the IFGs that are are dropped based on temps TODO: HERE
+
     return fields, temps[:, good]
 
 
@@ -698,6 +700,7 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
 
     data = np.load(f"{g.PREPROCESSED_DATA_PATH}cal.npz")
+    preped_data = np.load(f"{g.PROCESSED_DATA_PATH}")
     print(f"Data loaded from {g.PREPROCESSED_DATA_PATH}cal.npz")
 
     fnyq = gen_nyquistl("../reference/fex_samprate.txt", "../reference/fex_nyquist.txt", "int")
@@ -705,7 +708,8 @@ def main():
     # One bolometer reads out each channel, so the time constant scale is fitted once
     # per channel over all of its modes.  Group the work that way.
     by_channel = {}
-    for channel, mode in channel_modes(args.channels, args.modes):
+    # for channel, mode in channel_modes(args.channels, args.modes): # TODO: PUT BACK TO SEE ALL CHANNELS AND MODES. ONLY DOING LLSS FOR NOW
+    for channel, mode in zip(["ll"], ["ss"]):
         by_channel.setdefault(channel, []).append(mode)
 
     summary = {}
