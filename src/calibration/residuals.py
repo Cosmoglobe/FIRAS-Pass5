@@ -20,6 +20,7 @@ whatever the response function got wrong.
 
 import argparse
 import os
+import textwrap
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -63,9 +64,8 @@ ghz_to_icm = g.C / 1e7  # GHz to cm/s
 
 
 def add_wavenumber_axis(ax):
-    secax = ax.secondary_xaxis(
-        "top", functions=(lambda x: x / ghz_to_icm, lambda x: x * ghz_to_icm)
-    )
+    secax = ax.secondary_xaxis("top", functions=(lambda x: x / ghz_to_icm, lambda x: x *
+                                                 ghz_to_icm))
     secax.set_xlabel("Wavenumber (cm⁻¹)")
 
 
@@ -171,7 +171,8 @@ for channel in g.CHANNELS:
         else:
             print(f"  no fitted emissivities at {fitted_path}; published model only")
 
-        n = args.index
+        # n = args.index
+        n = np.random.randint(0, original_ifgs.shape[0])
         if not 0 <= n < original_ifgs.shape[0]:
             print(f"  --index {n} outside the {original_ifgs.shape[0]} records; skipping")
             continue
@@ -241,6 +242,7 @@ for channel in g.CHANNELS:
         caption = (f"Temps: XCAL={xcal[n]:.2f}, ICAL={ical[n]:.2f}, dihed={dihedral[n]:.2f}, "
                    f"refhorn={refhorn[n]:.2f}, skyhorn={skyhorn[n]:.2f}, "
                    f"collimator={collimator[n]:.2f}, bolometer={bolometer[n]:.2f}")
+        caption = textwrap.fill(caption, width=65)
 
         # plot emissivities
         fig, ax = plt.subplots(4, 2, figsize=(15, 20), sharex=True, sharey=True)
@@ -254,7 +256,7 @@ for channel in g.CHANNELS:
                           label=f"{name} (imag)")
             axis.set_title("OTF" if i == 0 else f"{label} Emissivity")
             axis.legend(fontsize="x-small")
-        fig.tight_layout()
+        fig.tight_layout(rect=[0, 0, 1, 0.88])
         plt.savefig(f"{out_dir}/emissivities{suffix}.png", bbox_inches="tight")
         plt.close()
 
@@ -270,7 +272,7 @@ for channel in g.CHANNELS:
                           label=f"{name} (imag)")
             axis.set_title(label)
             axis.legend(fontsize="x-small")
-        fig.tight_layout()
+        fig.tight_layout(rect=[0, 0, 1, 0.88])
         plt.savefig(f"{out_dir}/emissivities_div_otf{suffix}.png", bbox_inches="tight")
         plt.close()
 
@@ -300,7 +302,7 @@ for channel in g.CHANNELS:
                 axis.set_ylabel("MJy/sr")
         ax.flatten()[6].set_xlabel("Frequency (GHz)")
         ax.flatten()[7].set_xlabel("Frequency (GHz)")
-        fig.tight_layout()
+        fig.tight_layout(rect=[0, 0, 1, 0.88])
         fig.savefig(f"{out_dir}/{n}_01_bb_spectra{suffix}.png", bbox_inches="tight")
         plt.close()
 
@@ -334,7 +336,7 @@ for channel in g.CHANNELS:
                 axis.set_ylabel("MJy/sr")
         ax.flatten()[6].set_xlabel("Frequency (GHz)")
         ax.flatten()[7].set_xlabel("Frequency (GHz)")
-        fig.tight_layout()
+        fig.tight_layout(rect=[0, 0, 1, 0.88])
         plt.savefig(f"{out_dir}/{n}_01b_bb_spectra_emissivities{suffix}.png",
                     bbox_inches="tight")
         plt.close()
@@ -354,7 +356,7 @@ for channel in g.CHANNELS:
             axis.set_xlabel("Frequency (GHz)")
             axis.set_ylabel("MJy/sr")
             axis.legend(fontsize="x-small")
-        fig.tight_layout()
+        fig.tight_layout(rect=[0, 0, 1, 0.88])
         plt.savefig(f"{out_dir}/{n}_01c_bb_spectra_components{suffix}.png",
                     bbox_inches="tight")
         plt.close()
@@ -383,7 +385,7 @@ for channel in g.CHANNELS:
                 axis.set_ylabel("MJy/sr")
         ax.flatten()[6].set_xlabel("Frequency (GHz)")
         ax.flatten()[7].set_xlabel("Frequency (GHz)")
-        fig.tight_layout()
+        fig.tight_layout(rect=[0, 0, 1, 0.88])
         plt.savefig(f"{out_dir}/{n}_02_residuals{suffix}.png", bbox_inches="tight")
         plt.close()
 
@@ -406,7 +408,7 @@ for channel in g.CHANNELS:
         ax[1].set_xlabel("Frequency (GHz)")
         ax[1].set_ylabel("MJy/sr")
         ax[1].legend(fontsize="x-small")
-        fig.tight_layout()
+        fig.tight_layout(rect=[0, 0, 1, 0.88])
         plt.savefig(f"{out_dir}/{n}_03_spectra_comparison{suffix}.png", bbox_inches="tight")
         plt.close()
 
@@ -453,8 +455,11 @@ for channel in g.CHANNELS:
             for axis in ax:
                 axis.axvline(x=peak, color="red", linestyle=":")
 
-            fig.tight_layout()
+            fig.tight_layout(rect=[0, 0, 1, 0.88])
             plt.savefig(f"{out_dir}/{n}_{tag}{suffix}.png", bbox_inches="tight")
+            if tag == "04_ifg_residuals":
+                plt.savefig("/mn/stornext/d5/data/aimartin/firas-reanalysis/FIRAS-Pass5/src/"
+                            f"calibration/output/llss_checks/{n}.png")
             plt.close()
 
         # A number to go with the pictures: how much of the interferogram each model

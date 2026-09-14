@@ -56,8 +56,10 @@ from utils.config import gen_nyquistl
 
 # The four bolometer assemblies, in the order R() documents for indices 6-9.  Each one
 # has its own temperature, measured in its own channel.
-BOLOMETER_CHANNELS = ["rh", "rl", "lh", "ll"]
-assert [g.CHANNELS[c] for c in BOLOMETER_CHANNELS] == [0, 1, 2, 3]
+# BOLOMETER_CHANNELS = ["rh", "rl", "lh", "ll"]
+BOLOMETER_CHANNELS = ["ll"]  # only fit the LL bolometer for now TODO: PUT THIS BACK
+# assert [g.CHANNELS[c] for c in BOLOMETER_CHANNELS] == [0, 1, 2, 3]
+
 
 # Rows of `temps`, and the columns of the saved solution.
 EMITTERS = [
@@ -71,7 +73,7 @@ EMITTERS = [
 N_EMISSIVITIES = len(EMITTERS)
 
 # Where the four bolometer assemblies start in EMITTERS.
-FIRST_BOLOMETER = EMITTERS.index("bolometer rh")
+FIRST_BOLOMETER = EMITTERS.index("bolometer ll") # TODO: PUT THIS BACK TO RH
 
 # The published emissivity columns for emitters 0-5 (the XCAL one is TRANSFE).  The
 # published model has a single bolometer column, BOLOMET, which is compared against
@@ -210,7 +212,8 @@ def published_emissivities(channel, mode):
 
         published = np.zeros((g.SPEC_SIZE, N_EMISSIVITIES), dtype=complex)
         columns = FITS_COLUMNS + ["BOLOMET"]
-        rows = list(range(len(FITS_COLUMNS))) + [FIRST_BOLOMETER + g.CHANNELS[channel]]
+        rows = list(range(len(FITS_COLUMNS))) + [FIRST_BOLOMETER +
+                                                 BOLOMETER_CHANNELS.index(channel)]
         for row, name in zip(rows, columns):
             column = record[f"R{name}"][0] + 1j * record[f"I{name}"][0]
             published[cutoff:cutoff + n_band, row] = column[:n_band]
@@ -230,21 +233,9 @@ def raw_spectra(ifg, channel, mode, adds_per_group, bol_cmd_bias, bol_volt, Tbol
     reaches the fit; whether the low bins carry anything is then a result rather than
     an assumption.
     """
-    return ifg_spec.ifg_to_spec(
-        ifg,
-        channel,
-        mode,
-        adds_per_group,
-        bol_cmd_bias,
-        bol_volt,
-        fnyq_icm,
-        otf=np.ones(g.SPEC_SIZE),
-        Tbol=Tbol,
-        apod=False,
-        gain=gain,
-        sweeps=sweeps,
-        cutoff=0,
-    )
+    return ifg_spec.ifg_to_spec(ifg, channel, mode, adds_per_group, bol_cmd_bias, bol_volt,
+                                fnyq_icm, otf=np.ones(g.SPEC_SIZE), Tbol=Tbol, apod=False,
+                                gain=gain, sweeps=sweeps, cutoff=0)
 
 
 def time_constants(channel, mode, bol_cmd_bias, bol_volt, Tbol):
