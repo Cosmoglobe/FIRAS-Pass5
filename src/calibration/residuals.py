@@ -148,8 +148,9 @@ for channel in g.CHANNELS:
                 ["TRANSFE", "ICAL", "DIHEDRA", "REFHORN", "SKYHORN", "STRUCTU", "BOLOMET"]
             ])
         }
-        # The published emissivities go with the published time constant.
-        tau_scales = {"published": 1.0}
+        # TODO: ADD HERE THE NEW FITTED BOLOMETER PARAMETERS
+        bolometer_parameters = (np.load(f"{args.fit_dir}/fit_bolometer_{channel}_{mode}.npz")
+                                ["bolometer_parameters"])
 
         fitted_path = f"{args.fit_dir}/fitted_emissivities_{channel}_{mode}.npy"
         diagnostics_path = f"{args.fit_dir}/fit_diagnostics_{channel}_{mode}.npz"
@@ -163,11 +164,6 @@ for channel in g.CHANNELS:
             emissivities["fitted"] = np.column_stack(
                 [fitted[:, i] for i in range(6)] + [fitted[:, 6:].sum(axis=1)]
             )
-            # The fitted emissivities are only consistent with a bolometer response
-            # built from tau_scale * tau, so the two have to travel together.
-            tau_scales["fitted"] = float(np.load(diagnostics_path)["tau_scale"])
-            print(f"  fitted emissivities from {fitted_path}, "
-                  f"tau_scale = {tau_scales['fitted']:.4f}")
         else:
             print(f"  no fitted emissivities at {fitted_path}; published model only")
 
@@ -181,14 +177,13 @@ for channel in g.CHANNELS:
         results = {}
         for name, E in emissivities.items():
             otf = E[:, 0]
-            tau_scale = tau_scales[name]
 
             processed_spectra = ifg_spec.ifg_to_spec(original_ifgs, channel=channel, mode=mode,
                                                      adds_per_group=adds_per_group, sweeps=sweeps,
                                                      bol_cmd_bias=bol_cmd_bias / 25.5,
                                                      bol_volt=bol_volt, gain=gain,
                                                      fnyq_icm=fnyq_icm, otf=otf, Tbol=temps[6],
-                                                     apod=apod, tau_scale=tau_scale)
+                                                     apod=apod)
 
             # Solve the model for each emitter in turn, given all the others. For the
             # XCAL this is the pipeline's own calibration step,
@@ -211,7 +206,7 @@ for channel in g.CHANNELS:
             simulated_ifgs, simulated_spectra = generate_ifg(
                 channel=channel, mode=mode, temps=temps, apod=apod,
                 adds_per_group=adds_per_group, sweeps=sweeps, bol_cmd_bias=bol_cmd_bias,
-                bol_volt=bol_volt, gain=gain, emissivities=E, tau_scale=tau_scale)
+                bol_volt=bol_volt, gain=gain, emissivities=E)
 
             # Move the XCAL residual from one side of the comparison to the other.
             xcal_residuals = decomposed[0][n] - bb[0][n]
@@ -224,7 +219,7 @@ for channel in g.CHANNELS:
                 channel=channel, mode=mode, temps=temps[:, one], apod=apod,
                 adds_per_group=adds_per_group[one], sweeps=sweeps[one],
                 bol_cmd_bias=bol_cmd_bias[one], bol_volt=bol_volt[one], gain=gain[one],
-                emiss_xcal=otf, tau_scale=tau_scale,
+                emiss_xcal=otf,
                 total_spectra=np.nan_to_num(simulated_plus_noise, nan=0.0)[np.newaxis, :])
 
             if channel[0] == "r":

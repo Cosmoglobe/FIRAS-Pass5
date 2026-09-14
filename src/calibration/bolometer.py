@@ -86,16 +86,17 @@ def calculate_time_constant(C3, Tbol, C1, G1, beta, bol_volt, Jo, Jg, bol_cmd_bi
 
 
 def get_bolometer_response_function(channel, mode, bol_cmd_bias, bol_volt, Tbol, nui=None,
-                                    tau_scale=1.0):
+                                    parameters=None):
     """
     S0 / (1 + i w tau), the bolometer response.
 
-    tau_scale multiplies the published time constant.  `fit_otf` fits one such scale
-    per channel alongside the emissivities, and its emissivities are only consistent
-    with a response built from tau_scale * tau, so anything using them has to pass the
-    same scale here.  tau_scale = 1 is the published time constant.
+    ``parameters`` may supply the full (R0, T0, G1, beta, rho, C1, C3, Jo, Jg) tuple;
+    this is used by the calibration fit to evaluate a trial physical detector model.
     """
-    R0, T0, G1, beta, rho, C1, C3, Jo, Jg = get_bolometer_parameters(channel, mode)
+    if parameters is None:
+        R0, T0, G1, beta, rho, C1, C3, Jo, Jg = get_bolometer_parameters(channel, mode)
+    else:
+        R0, T0, G1, beta, rho, C1, C3, Jo, Jg = parameters
 
     # bolometer response function
     S0 = calculate_dc_response(bol_cmd_bias=bol_cmd_bias, bol_volt=bol_volt, Tbol=Tbol, R0=R0,
@@ -103,7 +104,6 @@ def get_bolometer_response_function(channel, mode, bol_cmd_bias, bol_volt, Tbol,
 
     tau = calculate_time_constant(C3=C3, Tbol=Tbol, C1=C1, G1=G1, beta=beta, bol_volt=bol_volt,
                                   Jo=Jo, Jg=Jg, bol_cmd_bias=bol_cmd_bias, rho=rho, T0=T0)
-    tau = tau * tau_scale
 
     omega = utils.get_afreq(0 if mode[1] == "s" else 1, channel, 257, nui=nui)
 

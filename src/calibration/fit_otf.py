@@ -26,18 +26,15 @@ explaining the data so the usable range can be read off.  (Bins below the cutoff
 0-4 for the short-slow modes -- are zeroed by the pipeline in `ifg_to_spec`, since the
 DC block leaves no signal there.)
 
-The bolometer time constant is fitted too, as a single scale factor on the published
-tau.  That scale -- and only that scale -- is shared across a channel's modes: there is
-one bolometer per channel and its thermal time constant cannot depend on how the mirror
-is scanning, so LL/SS and LL/LF are made to agree on tau.  The emissivities stay
-strictly per mode, each solved on its own frequency grid, because the two modes probe
-different frequencies and nothing says one mode's E(nu) carries over to the other.
-`solve_band`, `best_tau_scale` and `apply_tau_scale` split the fit so the shared scale
-can be chosen after every mode of the channel has been solved.
+All nine physical bolometer parameters (R0, T0, G1, beta, rho, C1, C3, Jo, Jg) are
+fitted jointly, once per channel and shared by its modes.  At every trial response the
+emissivities are still solved exactly by linear least squares (variable projection), so
+the non-linear optimiser only sees the nine detector parameters.
 
 Output: `fitted_emissivities_{channel}_{mode}.npy`, shape (SPEC_SIZE, 10), complex, one
 file per mode.  Column i is E_i in the ordering used by `R()` below, and
-`fit_diagnostics_{channel}_{mode}.npz` carries the `tau_scale` they go with.
+`fit_diagnostics_{channel}_{mode}.npz` carries the fitted and published bolometer
+parameter vectors they go with.
 """
 
 import argparse
@@ -47,6 +44,7 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 from astropy.io import fits
+from scipy.optimize import minimize, minimize_scalar
 
 import globals as g
 from calibration import bolometer
@@ -83,6 +81,7 @@ FITS_COLUMNS = ["TRANSFE", "ICAL", "DIHEDRA", "REFHORN", "SKYHORN", "STRUCTU"]
 # bol_cmd_bias is stored as raw counts; the rest of the pipeline divides by this to
 # get volts before handing it to the bolometer model (see fsl.py, cal_ifgs.py).
 BOL_CMD_BIAS_TO_VOLTS = 25.5
+BOLOMETER_PARAMETER_NAMES = ("R0", "T0", "G1", "beta", "rho", "C1", "C3", "Jo", "Jg")
 
 
 def get_memory_usage():
@@ -236,14 +235,6 @@ def raw_spectra(ifg, channel, mode, adds_per_group, bol_cmd_bias, bol_volt, Tbol
     return ifg_spec.ifg_to_spec(ifg, channel, mode, adds_per_group, bol_cmd_bias, bol_volt,
                                 fnyq_icm, otf=np.ones(g.SPEC_SIZE), Tbol=Tbol, apod=False,
                                 gain=gain, sweeps=sweeps, cutoff=0)
-
-
-def time_constants(channel, mode, bol_cmd_bias, bol_volt, Tbol):
-    """The published bolometer time constant tau, one value per interferogram."""
-    R0, T0, G1, beta, rho, C1, C3, Jo, Jg = bolometer.get_bolometer_parameters(channel, mode)
-    return bolometer.calculate_time_constant(C3=C3, Tbol=Tbol, C1=C1, G1=G1, beta=beta,
-                                             bol_volt=bol_volt, Jo=Jo, Jg=Jg,
-                                             bol_cmd_bias=bol_cmd_bias, rho=rho, T0=T0)
 
 
 def audio_frequencies(channel, mode):
@@ -425,6 +416,136 @@ def apply_tau_scale(fit, alpha):
     return solution, diagnostics
 
 
+def bolometer_response(channel, mode, fields, Tbol, parameters):
+    """Response on the complete spectral grid for explicit physical parameters."""
+    return bolometer.get_bolometer_response_function(
+        channel, mode, fields["bol_cmd_bias"], fields["bol_volt"], Tbol,
+        parameters=parameters,
+    )
+
+
+def solve_with_bolometer_parameters(spec, temps, frequencies, band, channel, mode, fields,
+                                    published_parameters, parameters, weights=None, rcond=None,
+                                    sum_zero=True, keep_solution=True):
+    """Profile out emissivities for a trial set of physical bolometer parameters.
+
+    ``spec`` is divided by the published response by :func:`raw_spectra`.  Multiplying
+    it by ``B_published / B_trial`` gives the spectrum that would have resulted had it
+    been divided by the trial response instead.  The remaining fit is linear.
+    """
+    Tbol = temps[bolometer_row(temps, channel)]
+    try:
+        B_published = bolometer_response(channel, mode, fields, Tbol, published_parameters)
+        B_trial = bolometer_response(channel, mode, fields, Tbol, parameters)
+        with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+            corrected = spec * B_published / B_trial
+    except (FloatingPointError, ValueError, np.linalg.LinAlgError):
+        return None
+
+    solution = np.zeros((g.SPEC_SIZE, N_EMISSIVITIES), dtype=complex)
+    diagnostics = {key: np.full(g.SPEC_SIZE, np.nan)
+                   for key in ("cond", "rank", "chi2", "chi2_null", "rms_resid", "rms_data")}
+    chi2 = 0.0
+    for nui in range(band.start, band.stop):
+        A = design_matrix(temps, frequencies[nui])
+        if sum_zero:
+            A = A[:, 1:] - A[:, [0]]
+        y = corrected[:, nui]
+        if weights is not None:
+            A, y = A * weights[:, np.newaxis], y * weights
+        if not (np.isfinite(A).all() and np.isfinite(y).all() and np.any(A)):
+            return None
+        coefficients, _, rank, _ = np.linalg.lstsq(A, y, rcond=rcond)
+        residual = A @ coefficients - y
+        value = float(np.sum(np.abs(residual) ** 2))
+        null_value = float(np.sum(np.abs(y) ** 2))
+        if not np.isfinite(value):
+            return None
+        chi2 += value
+        diagnostics["chi2"][nui] = value
+        diagnostics["chi2_null"][nui] = null_value
+        diagnostics["rms_resid"][nui] = np.sqrt(value / y.size)
+        diagnostics["rms_data"][nui] = np.sqrt(null_value / y.size)
+        diagnostics["rank"][nui] = rank
+        try:
+            diagnostics["cond"][nui] = np.linalg.cond(A)
+        except np.linalg.LinAlgError:
+            diagnostics["cond"][nui] = np.inf
+        if keep_solution:
+            if sum_zero:
+                solution[nui, 1:] = coefficients
+                solution[nui, 0] = -coefficients.sum()
+            else:
+                solution[nui] = coefficients
+    return chi2, solution, diagnostics
+
+
+def fit_bolometer_parameters(entries, bound_factor, maxiter):
+    """Fit one shared nine-parameter detector model using variable projection."""
+    reference = np.asarray(entries[0]["published_parameters"], dtype=float)
+    if np.any(~np.isfinite(reference)) or np.any(reference == 0):
+        raise ValueError("published bolometer parameters must be finite and non-zero")
+    log_bound = np.log(bound_factor)
+    evaluations = 0
+
+    def objective(log_ratio):
+        nonlocal evaluations
+        evaluations += 1
+        parameters = reference * np.exp(log_ratio)
+        total = 0.0
+        for entry in entries:
+            result = solve_with_bolometer_parameters(
+                entry["spec"], entry["temps"], entry["frequencies"], entry["band"],
+                entry["channel"], entry["mode"], entry["fields"],
+                entry["published_parameters"], parameters, entry["weights"], entry["rcond"],
+                entry["sum_zero"], keep_solution=False,
+            )
+            if result is None:
+                return np.inf
+            total += result[0]
+        return total
+
+    result = minimize(objective, np.zeros(reference.size), method="L-BFGS-B",
+                      bounds=[(-log_bound, log_bound)] * reference.size,
+                      options={"maxiter": maxiter, "ftol": 1e-10})
+    parameters = reference * np.exp(result.x)
+    return parameters, result, evaluations
+
+def fit_Jo(entries, bound_factor, maxiter):
+    """Fit only Jo while keeping the other bolometer parameters published."""
+    reference = np.asarray(entries[0]["published_parameters"], dtype=float)
+    jo_index = BOLOMETER_PARAMETER_NAMES.index("Jo")
+    if not np.isfinite(reference[jo_index]) or reference[jo_index] == 0:
+        raise ValueError("published Jo must be finite and non-zero")
+
+    log_bound = np.log(bound_factor)
+    evaluations = 0
+
+    def objective(log_ratio):
+        nonlocal evaluations
+        evaluations += 1
+        parameters = reference.copy()
+        parameters[jo_index] *= np.exp(log_ratio)
+        total = 0.0
+        for entry in entries:
+            result = solve_with_bolometer_parameters(
+                entry["spec"], entry["temps"], entry["frequencies"], entry["band"],
+                entry["channel"], entry["mode"], entry["fields"],
+                entry["published_parameters"], parameters, entry["weights"], entry["rcond"],
+                entry["sum_zero"], keep_solution=False,
+            )
+            if result is None:
+                return np.inf
+            total += result[0]
+        return total
+
+    result = minimize_scalar(objective, bounds=(-log_bound, log_bound), method="bounded",
+                             options={"maxiter": maxiter, "xatol": 1e-10})
+    parameters = reference.copy()
+    parameters[jo_index] *= np.exp(result.x)
+    return parameters, result, evaluations
+
+
 def plot_solution(solution, published, band, published_band, frequencies, channel, mode, out_dir):
     """
     Fitted emissivities against the published ones, one panel per emitter.
@@ -477,58 +598,6 @@ def plot_solution(solution, published, band, published_band, frequencies, channe
     print(f"  wrote {path}")
 
 
-_GRT_INTERPOLATORS = None
-
-
-def grt_interpolators():
-    """
-    Interpolators for the raw GRT series, cached across channels and modes.
-
-    Only the bolometers are read from here.  The other six emitter temperatures in
-    cal.npz have already been through the plateau fits, the self-heating de-biasing and
-    the noise-weighted average of the two sides in data_prep_v5, none of which this
-    reproduces; the bolometers are the one element that skips all of it, and are
-    interpolated there against the raw engineering times rather than the GRT times that
-    carry the time-domain-multiplexing offsets.
-    """
-    global _GRT_INTERPOLATORS
-    if _GRT_INTERPOLATORS is None:
-        from engineering_timing import get_interpolated_times as timing
-        grts, grt_times = timing.get_data()
-        _GRT_INTERPOLATORS = timing.get_interp(grts, grt_times)
-    return _GRT_INTERPOLATORS
-
-
-def bolometer_temperatures(times):
-    """
-    The four bolometer assembly temperatures interpolated onto `times`.
-
-    bol_assem_1..4 are the columns of the GRT block in channel order, the same indexing
-    data_prep_v5 uses (`grt["a_lo_bol_assem"][:, channel_i]`), so bol_assem_{k+1}
-    belongs to BOLOMETER_CHANNELS[k].  Only the low-current readings exist for the
-    bolometers; the two sides are averaged, as data_prep_v5 does.
-
-    Returns
-    -------
-    temps : (4, nrecord) array, in BOLOMETER_CHANNELS order
-    good : (nrecord,) bool array, False outside the span the GRTs cover
-    """
-    interpolators = grt_interpolators()
-    keys = [[f"{side}_lo_bol_assem_{k + 1}" for side in ("a", "b")]
-            for k in range(len(BOLOMETER_CHANNELS))]
-
-    # interp1d refuses to extrapolate, so restrict to the span every GRT covers.  For
-    # the calibration data this is the whole mission, and nothing is dropped.
-    covered = [interpolators[key].x for pair in keys for key in pair]
-    good = (times >= max(x[0] for x in covered)) & (times <= min(x[-1] for x in covered))
-
-    temps = np.full((len(BOLOMETER_CHANNELS), times.size), np.nan)
-    for k, pair in enumerate(keys):
-        temps[k, good] = np.mean([interpolators[key](times[good]) for key in pair], axis=0)
-
-    return temps, good
-
-
 def load_channel_mode(data, channel, mode, max_ifgs=None):
     """Select the calibration records for one channel and mode, dropping bad ones."""
     length_filter = data[f"mtm_length_{channel}"] == (0 if mode[0] == "s" else 1)
@@ -539,11 +608,10 @@ def load_channel_mode(data, channel, mode, max_ifgs=None):
     for name in ("ifg", "adds_per_group", "sweeps", "bol_cmd_bias", "bol_volt", "gain"):
         fields[name] = data[f"{name}_{channel}"][mode_filter]
 
-    bolometers, covered = bolometer_temperatures(data[f"midpoint_time_s_{channel}"])
     temps = np.vstack([
         [data[f"{name}_{channel}"][mode_filter] for name in
          ("xcal_cone", "ical", "dihedral", "refhorn", "skyhorn", "collimator")],
-        bolometers[:, mode_filter],
+        data[f"bolometer_{channel}"][mode_filter][np.newaxis, :],
     ])
 
     # Every emitter temperature has to be finite: the fit sums over all interferograms,
@@ -552,10 +620,8 @@ def load_channel_mode(data, channel, mode, max_ifgs=None):
     housekeeping = (np.isfinite(fields["bol_volt"]) & np.isfinite(fields["bol_cmd_bias"])
                     & (fields["gain"] > 0) & (fields["sweeps"] > 0))
     good = finite & housekeeping
-    uncovered = (~covered[mode_filter]).sum()
     print(f"  {good.sum()} of {good.size} interferograms usable "
-          f"({(~good).sum()} dropped for NaN temperatures or bad housekeeping"
-          + (f", {uncovered} of them outside the GRT coverage" if uncovered else "") + ")")
+          f"({(~good).sum()} dropped for NaN temperatures or bad housekeeping)")
 
     if max_ifgs is not None and good.sum() > max_ifgs:
         keep = np.flatnonzero(good)[:max_ifgs]
@@ -566,8 +632,6 @@ def load_channel_mode(data, channel, mode, max_ifgs=None):
     fields = {name: value[good] for name, value in fields.items()}
     # the bolometer model wants volts, not raw counts
     fields["bol_cmd_bias"] = fields["bol_cmd_bias"] / BOL_CMD_BIAS_TO_VOLTS
-
-    # let's also drop all of the IFGs that are are dropped based on temps TODO: HERE
 
     return fields, temps[:, good]
 
@@ -602,15 +666,7 @@ def report(solution, published, diagnostics, band, published_band, frequencies):
     print(f"\n  chi2 / chi2(no model) over all fitted bins: median {np.median(ratio):.4f}, "
           f"worst {ratio.max():.4f}")
 
-    # If 1/(1 + i w tau) is the right shape, the scale each bin would pick on its own is
-    # the same everywhere; a trend with frequency means the response model is wrong.
     pub_bins = np.arange(published_band.start, published_band.stop)
-    per_bin = diagnostics["alpha"][pub_bins]
-    if np.isfinite(per_bin).any():
-        half = pub_bins.size // 2
-        print(f"  tau scale each bin would choose on its own, over the published band: median "
-              f"{np.nanmedian(per_bin):.3f} (lower half {np.nanmedian(per_bin[:half]):.3f}, "
-              f"upper half {np.nanmedian(per_bin[half:]):.3f})")
     print(f"  condition number: median {np.median(diagnostics['cond'][bins]):.2e}, "
           f"worst {diagnostics['cond'][bins].max():.2e}")
 
@@ -674,14 +730,11 @@ def main():
                              "emissivities running away. Pass 0 to keep every direction.")
     parser.add_argument("--no-sum-zero", dest="sum_zero", action="store_false",
                         help="Do not constrain the emissivities to sum to zero.")
-    parser.add_argument("--no-fit-tau", dest="fit_tau", action="store_false",
-                        help="Keep the published bolometer time constant instead of fitting a "
-                             "scale factor for it alongside the emissivities.")
-    parser.add_argument("--tau-per-mode", action="store_true",
-                        help="Fit the time constant scale separately for each mode instead of "
-                             "one per channel. There is one bolometer per channel, so its time "
-                             "constant cannot depend on the scan mode; this is a diagnostic for "
-                             "how far the two modes disagree, not a physical model.")
+    parser.add_argument("--bolometer-bound-factor", type=float, default=2.0,
+                        help="Constrain each fitted bolometer parameter to this multiplicative "
+                             "factor of its published value (default: 2).")
+    parser.add_argument("--bolometer-maxiter", type=int, default=100,
+                        help="Maximum L-BFGS-B iterations for the nine-parameter fit (default: 100).")
     parser.add_argument("--published-band", action="store_true",
                         help="Fit only the bins the published model covers, instead of every bin "
                              "up to Nyquist.")
@@ -695,18 +748,19 @@ def main():
 
     fnyq = gen_nyquistl("../reference/fex_samprate.txt", "../reference/fex_nyquist.txt", "int")
 
-    # One bolometer reads out each channel, so the time constant scale is fitted once
-    # per channel over all of its modes.  Group the work that way.
+    if args.bolometer_bound_factor <= 1:
+        parser.error("--bolometer-bound-factor must be greater than one")
+
+    # One bolometer reads out each channel, so its physical parameters are fitted once
+    # per channel over all requested modes.
     by_channel = {}
-    # for channel, mode in channel_modes(args.channels, args.modes): # TODO: PUT BACK TO SEE ALL CHANNELS AND MODES. ONLY DOING LLSS FOR NOW
-    for channel, mode in zip(["ll"], ["ss"]):
+    for channel, mode in channel_modes(args.channels, args.modes):
         by_channel.setdefault(channel, []).append(mode)
 
     summary = {}
     for channel, modes in by_channel.items():
-        # Pass 1: solve every mode of this channel.  `solve_band` returns the
-        # emissivities as an exact linear function of the time constant scale, so the
-        # interferograms are transformed once even though the scale is not known yet.
+        # Transform every mode once.  The nonlinear fit below only changes the
+        # bolometer-response ratio, never the Fourier transform.
         solved = []
         for mode in modes:
             print(f"\n{'=' * 70}\n{channel}_{mode}\n{'=' * 70}")
@@ -742,6 +796,7 @@ def main():
             if not finite.all():
                 print(f"  dropping {(~finite).sum()} interferograms with non-finite spectra")
                 spec, temps = spec[finite], temps[:, finite]
+                fields = {name: value[finite] for name, value in fields.items()}
 
             weights = noise_weights(spec, published_band) if args.weight else None
             if weights is not None:
@@ -749,65 +804,61 @@ def main():
                 if not usable.all():
                     print(f"  dropping {(~usable).sum()} interferograms with no noise estimate")
                     spec, temps, weights = spec[usable], temps[:, usable], weights[usable]
+                    fields = {name: value[usable] for name, value in fields.items()}
 
             memory = get_memory_usage()
             if memory:
                 print(f"  memory in use: {memory:.2f} GB")
 
-            tau = time_constants(channel, mode, fields["bol_cmd_bias"], fields["bol_volt"],
-                                 temps[bolometer_row(temps, channel)])
-            omega = audio_frequencies(channel, mode)
-            print(f"  published time constant: median {np.median(tau) * 1e3:.2f} ms, "
-                  f"w*tau at the top of the published band "
-                  f"{omega[published_band.stop - 1] * np.median(tau):.3f}")
-
-            print(f"  solving {band.stop - band.start} linear least-squares problems "
-                  f"({spec.shape[0]} interferograms x {len(EMITTERS)} emissivities"
-                  + (" + tau)..." if args.fit_tau else ")..."))
-            fit = solve_band(spec, temps, frequencies, band, tau, omega, weights, args.rcond,
-                             args.sum_zero)
-            print(f"  solve time: {time.time() - start:.1f} s")
-
-            # Everything kept here is O(SPEC_SIZE) and independent of the number of
-            # interferograms, so holding both modes of a channel costs nothing.
-            solved.append({"mode": mode, "fit": fit, "published": published, "band": band,
+            published_parameters = np.asarray(bolometer.get_bolometer_parameters(channel, mode),
+                                              dtype=float)
+            print(f"  profiling {band.stop - band.start} frequency-bin emissivity fits "
+                  f"against 9 bolometer parameters ({spec.shape[0]} interferograms)")
+            solved.append({"channel": channel, "mode": mode, "spec": spec, "temps": temps,
+                           "fields": fields, "weights": weights, "rcond": args.rcond,
+                           "sum_zero": args.sum_zero, "published": published, "band": band,
                            "published_band": published_band, "frequencies": frequencies,
-                           "tau": float(np.median(tau)), "interferograms": spec.shape[0]})
-            del spec, temps, fields
+                           "published_parameters": published_parameters,
+                           "interferograms": spec.shape[0]})
 
         if not solved:
             continue
 
-        # Pass 2: pick the time constant scale, then finish every mode with it.
-        if not args.fit_tau:
-            scales = {entry["mode"]: 1.0 for entry in solved}
-        elif args.tau_per_mode:
-            scales = {entry["mode"]: best_tau_scale([entry["fit"]]) for entry in solved}
-        else:
-            shared = best_tau_scale([entry["fit"] for entry in solved])
-            scales = {entry["mode"]: shared for entry in solved}
-            if len(solved) > 1:
-                per_mode = " ".join(f"{entry['mode']}={best_tau_scale([entry['fit']]):.4f}"
-                                    for entry in solved)
-                print(f"\n  {channel}: one time constant scale for {len(solved)} modes, "
-                      f"alpha = {shared:.4f} (each mode on its own would pick {per_mode})")
+        print(f"\n  {channel}: fitting shared bolometer parameters across {len(solved)} mode(s)...")
+        # for the first iteration, let's fit Jo alone first, which seems to have a big effect on
+        # the fit. afterwards we can fit all together
+        Jo_parameters, Jo_optimizer, Jo_evaluations = fit_Jo(solved, args.bolometer_bound_factor, args.bolometer_maxiter)
+        print(f"  Jo optimiser: {Jo_optimizer.message} after {Jo_optimizer.nit} iterations / {Jo_evaluations} evaluations")
+        print(f"  fitted Jo parameter: {Jo_parameters[BOLOMETER_PARAMETER_NAMES.index('Jo')]:.7g}")
+
+        # put new Jo parameter into the published parameters for the next fit
+        for entry in solved:
+            entry["published_parameters"][BOLOMETER_PARAMETER_NAMES.index('Jo')] = Jo_parameters[BOLOMETER_PARAMETER_NAMES.index('Jo')]
+
+        parameters, optimizer, evaluations = fit_bolometer_parameters(
+            solved, args.bolometer_bound_factor, args.bolometer_maxiter)
+        print(f"  optimiser: {optimizer.message} after {optimizer.nit} iterations / "
+              f"{evaluations} evaluations")
+        print("  fitted bolometer parameters: " + ", ".join(
+            f"{name}={value:.7g}" for name, value in zip(BOLOMETER_PARAMETER_NAMES, parameters)))
 
         for entry in solved:
-            mode, alpha = entry["mode"], scales[entry["mode"]]
+            mode = entry["mode"]
             band, published_band = entry["band"], entry["published_band"]
             published, frequencies = entry["published"], entry["frequencies"]
-            print(f"\n{'-' * 70}\n{channel}_{mode}: results at alpha = {alpha:.4f}\n{'-' * 70}")
-
-            solution, diagnostics = apply_tau_scale(entry["fit"], alpha)
-            if args.fit_tau:
-                print(f"  time constant scale: alpha = {alpha:.4f} (alpha = 1 is the published "
-                      f"tau), so tau = {entry['tau'] * alpha * 1e3:.2f} ms at the median"
-                      + ("" if args.tau_per_mode else ", shared across this channel's modes"))
+            print(f"\n{'-' * 70}\n{channel}_{mode}: results with fitted bolometer parameters\n{'-' * 70}")
+            profiled = solve_with_bolometer_parameters(
+                entry["spec"], entry["temps"], frequencies, band, channel, mode, entry["fields"],
+                entry["published_parameters"], parameters, entry["weights"], entry["rcond"],
+                entry["sum_zero"], keep_solution=True)
+            if profiled is None:
+                raise RuntimeError("best-fit bolometer response is not finite")
+            _, solution, diagnostics = profiled
 
             summary[f"{channel}_{mode}"] = report(solution, published, diagnostics, band,
                                                   published_band, frequencies)
             summary[f"{channel}_{mode}"]["interferograms"] = entry["interferograms"]
-            summary[f"{channel}_{mode}"]["alpha"] = alpha
+            summary[f"{channel}_{mode}"]["parameters"] = parameters
             plot_solution(solution, published, band, published_band, frequencies, channel, mode,
                           args.out_dir)
 
@@ -815,22 +866,23 @@ def main():
             np.save(path, solution)
             print(f"  wrote {path}")
 
-            # The emissivities are only consistent with a bolometer response built from
-            # alpha * tau, so anything re-deriving residuals from them needs alpha too.
-            path = f"{args.out_dir}/fit_diagnostics_{channel}_{mode}.npz"
-            np.savez(path, tau_scale=alpha, band=[band.start, band.stop],
+            path = f"{args.out_dir}/fit_bolometer_{channel}_{mode}.npz"
+            np.savez(path, bolometer_parameter_names=BOLOMETER_PARAMETER_NAMES,
+                     bolometer_parameters=parameters,
+                     published_bolometer_parameters=entry["published_parameters"],
+                     band=[band.start, band.stop],
                      published_band=[published_band.start, published_band.stop], **diagnostics)
             print(f"  wrote {path}")
 
     if len(summary) > 1:
         print(f"\n{'=' * 70}\nAll channels and modes\n{'=' * 70}")
         print(f"  {'':>8} {'ifgs':>7} {'published band':>16} {'usable to':>16} "
-              f"{'chi2/null':>10} {'|dOTF|/OTF':>11} {'tau scale':>10}")
+              f"{'chi2/null':>10} {'|dOTF|/OTF':>11}")
         for name, row in summary.items():
             print(f"  {name:>8} {row['interferograms']:>7} "
                   f"{row['published_top_bin']:>5} {row['published_top_ghz']:>9.1f} GHz "
                   f"{row['usable_top_bin']:>5} {row['usable_top_ghz']:>9.1f} GHz "
-                  f"{row['chi2_ratio']:>10.4f} {row['otf_error']:>11.3f} {row['alpha']:>10.4f}")
+                  f"{row['chi2_ratio']:>10.4f} {row['otf_error']:>11.3f}")
         print("\n  'usable to' is the top of the contiguous run of bins where the model explains\n"
               "  more than half the variance and every |E| <= 1; chi2/null and |dOTF|/OTF are\n"
               "  medians over the published band.")
