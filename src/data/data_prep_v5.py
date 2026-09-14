@@ -414,32 +414,24 @@ for channel, channel_i in g.CHANNELS.items():
         cal_data[f"{element}_{channel}"] = all_data[f"{element}_{channel}"][cal_mask[channel]]
         sky_data[f"{element}_{channel}"] = all_data[f"{element}_{channel}"][sky_mask[channel]]
 
-    (
-        earth_limb,
-        sun_angle,
-        wrong_sci_mode,
-    ) = stats.table4_5(
-        sky_data[f"earth_limb_{channel}"],
-        cal_data[f"midpoint_time_gmt_{channel}"],
-        sky_data[f"midpoint_time_gmt_{channel}"],
-        cal_data[f"ical_{channel}"],
-        sky_data[f"ical_{channel}"],
-        sky_data[f"sun_angle_{channel}"],
-        sky_data[f"upmode_{channel}"],
-        cal_data[f"dihedral_{channel}"],
-        sky_data[f"dihedral_{channel}"],
-    )
+    (earth_limb, sun_angle, wrong_sci_mode, dihedral_cal, dihedral_sky) = stats.table4_5(
+        sky_data[f"earth_limb_{channel}"], cal_data[f"midpoint_time_gmt_{channel}"],
+        sky_data[f"midpoint_time_gmt_{channel}"], cal_data[f"ical_{channel}"],
+        sky_data[f"ical_{channel}"], sky_data[f"sun_angle_{channel}"],
+        sky_data[f"upmode_{channel}"], cal_data[f"dihedral_{channel}"],
+        sky_data[f"dihedral_{channel}"])
 
-    print("Ignoring official temperature cuts...")
+    print("Ignoring official temperature cuts... (except dihedral < 5.5K, we add that)")
 
-    sky_cuts = (
-        earth_limb
-        | sun_angle
-        | wrong_sci_mode
-    )
+    sky_cuts = (earth_limb | sun_angle | wrong_sci_mode | dihedral_sky)
+    cal_cuts = (dihedral_cal)
     for key in sky_data:
         if key.endswith(f"_{channel}"):
             sky_data[key] = sky_data[key][~sky_cuts]
+
+    for key in cal_data:
+        if key.endswith(f"_{channel}"):
+            cal_data[key] = cal_data[key][~cal_cuts]
 
     # engineering data based on channels
     bol_cmd_bias = en_stat["bol_cmd_bias"][:, channel_i]
@@ -507,6 +499,10 @@ for channel, channel_i in g.CHANNELS.items():
         eng_gain[idx0_cal] == 0
     )
     cal_data[f"gain_{channel}"] = np.where(~gain_mismatch_cal, eng_gain[idx0_cal], np.nan)
+
+    # use the cal_cuts in the new stuff added to cal data
+    # for key in ["bol_cmd_bias", "gain"]:
+    #     cal_data[f"{key}_{channel}"] = cal_data[f"{key}_{channel}"][~cal_cuts]
 
     # Vectorized status word processing for calibration data
     stat_words_cal = [

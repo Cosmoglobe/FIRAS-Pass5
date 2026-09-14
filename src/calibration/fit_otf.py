@@ -700,7 +700,6 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
 
     data = np.load(f"{g.PREPROCESSED_DATA_PATH}cal.npz")
-    preped_data = np.load(f"{g.PROCESSED_DATA_PATH}")
     print(f"Data loaded from {g.PREPROCESSED_DATA_PATH}cal.npz")
 
     fnyq = gen_nyquistl("../reference/fex_samprate.txt", "../reference/fex_nyquist.txt", "int")

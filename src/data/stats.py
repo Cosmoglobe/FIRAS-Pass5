@@ -143,15 +143,20 @@ def table4_5(
     wrong_sci_mode = upmode != 4
     print(f"    Wrong Science Mode: {wrong_sci_mode.sum()}")
 
+    dihedral_cal = dihedral_cal > 5.5
+    dihedral_sky = dihedral_sky > 5.5
+    print(f"    Dihedral Temperature > 5.5: {dihedral_sky.sum()}")
+
     print(f"    Sky Records Failed by FSS: {(earth_limb | sun_angle | wrong_sci_mode).sum()}")
-    print(
-        f"    Sky Records Passed by FSS: {len(midpoint_time_sky) - (earth_limb | sun_angle | wrong_sci_mode).sum()}"
-    )
+    print("    Sky Records Passed by FSS: ")
+    print(len(midpoint_time_sky) - (earth_limb | sun_angle | wrong_sci_mode).sum())
     
     return (
         earth_limb,
         sun_angle,
         wrong_sci_mode,
+        dihedral_cal,
+        dihedral_sky,
     )
 
 def hilo_stats(hi, lo, channel, element, side):
@@ -474,8 +479,11 @@ def debiase_hi(beta, hi, lo, low_temps, high_temps, lo_std, hi_std, element, sid
             plt.close(fig_debias)
         print("Plotted check 1 -------------------------------------------------------------------")
 
-    temp_weight = (lo / lo_std**2 + debiased_hi / hi_std**2) / (1 / lo_std**2 + 1 / hi_std**2)
-    temp_weight[low_temps | high_temps] = lo[low_temps | high_temps]
+    temp_weight = np.copy(lo)
+    mid_temps = ~low_temps & ~high_temps
+    temp_weight[mid_temps] = (lo[mid_temps] / lo_std[mid_temps]**2 + debiased_hi[mid_temps] /
+                              hi_std[mid_temps]**2) / (1 / lo_std[mid_temps]**2 + 1 /
+                                                       hi_std[mid_temps]**2)
 
     if g.VERBOSE > 2:
         x = np.arange(len(hi))
@@ -494,9 +502,9 @@ def debiase_hi(beta, hi, lo, low_temps, high_temps, lo_std, hi_std, element, sid
             ax_debias.legend()
             fig_debias.savefig(f"data/output/debiase_hi/02_weighting/{i}.png")
             plt.close(fig_debias)
-        
-    std_weight = 1 / np.sqrt(1 / lo_std**2 + 1 / hi_std**2)
-    std_weight[low_temps | high_temps] = lo_std[low_temps | high_temps]
+
+    std_weight = np.copy(lo_std)
+    std_weight[mid_temps] = 1 / np.sqrt(1 / lo_std[mid_temps]**2 + 1 / hi_std[mid_temps]**2)
 
     if g.VERBOSE == -1:
         return temp_weight, std_weight, lo, debiased_hi
