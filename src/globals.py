@@ -11,7 +11,7 @@ PREPROCESSED_DATA_PATH = f"/mn/stornext/d5/data/{user}/firas-reanalysis/FIRAS-Pa
 PROCESSED_DATA_PATH = f"/mn/stornext/d5/data/{user}/firas-reanalysis/FIRAS-Pass5/data/processed/"
 
 SAVE_PATH = f"/mn/stornext/d16/www_cmb/{user}/firas/"
-FITS_PATH = f"/mn/stornext/d5/data/aimartin/firas-reanalysis/FIRAS-Pass5/output/fits_files/"
+FITS_PATH = f"/mn/stornext/d5/data/{user}/firas-reanalysis/FIRAS-Pass5/output/fits_files/"
 
 # original pipeline parameters
 PUB_MODEL = "/mn/stornext/d16/cmbco/ola/firas/pub_calibration_model/"
