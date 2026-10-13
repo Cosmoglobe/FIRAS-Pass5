@@ -84,7 +84,7 @@ def generate_ifg(
     emiss_bolometer=None,
     emissivities=None,
     Tbol=None,
-    tau_scale=1.0,
+    bol_params=None,
 ):
     """
     Forward model one interferogram per set of emitter temperatures.
@@ -97,10 +97,8 @@ def generate_ifg(
     still the OTF-divided one, since that is what `ifg_to_spec` produces and what
     callers compare against.
 
-    Emissivities can be given either as the individual `emiss_*` arrays or, for the
-    ten-column form the fit produces, as `emissivities` of shape (257, n) whose columns
-    line up with the rows of `temps`.  `tau_scale` multiplies the published bolometer
-    time constant and must match the one the emissivities were fitted with.
+    Emissivities can be given either as the individual `emiss_*` arrays or as
+    `emissivities` of shape (257, n) whose columns line up with the rows of `temps`.
     """
 
     fits_data = fits.open(
@@ -201,7 +199,7 @@ def generate_ifg(
         # the OTF is already in spec_for_ifg; multiplying again would double-count it
         otf=np.ones(257, dtype=np.complex128),
         fnyq_icm=fnyq["icm"][frec],
-        tau_scale=tau_scale,
+        bol_params=bol_params,
     )
 
     # plt.plot(ifg[0], label=f"{channel.upper()}{mode.upper()} IFG")

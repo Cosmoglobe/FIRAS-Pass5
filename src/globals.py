@@ -59,14 +59,16 @@ PEAK_POSITIONS = {
 IFG_SIZE = 512
 SPEC_SIZE = 257
 
-CHANNELS = {"rh": 0, "rl": 1, "lh": 2, "ll": 3}
-MODES = {"ss": 0, "lf": 3}  # can change when i have the new cal models
+# CHANNELS = {"rh": 0, "rl": 1, "lh": 2, "ll": 3}
+CHANNELS = {"ll": 3}
+# MODES = {"ss": 0, "lf": 3}  # can change when i have the new cal models
+MODES = {"ss": 0}
 
 # verbose = -1: to make presentation plots
 # verbose = 0: no print statements
 # verbose = 1: print statements for major steps in the pipeline
 # verbose = 2: print statements for all steps in the pipeline
 # verbose = 3: includes intermediate plots
-VERBOSE = -1
+VERBOSE = 0
 
 COLORS = ["#044b97", "#e77e15", "#43b3de", "#f5dc65", "#cbdfdd"]

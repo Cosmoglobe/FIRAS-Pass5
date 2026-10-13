@@ -65,23 +65,8 @@ def unclean_ifg(
     return ifg
 
 
-def ifg_to_spec(
-    ifg,
-    channel,
-    mode,
-    adds_per_group,
-    bol_cmd_bias,
-    bol_volt,
-    fnyq_icm,
-    otf,
-    Tbol,
-    apod,
-    gain=1,
-    sweeps=1,
-    nui=None,
-    cutoff=None,
-    tau_scale=1.0,
-):
+def ifg_to_spec(ifg, channel, mode, adds_per_group, bol_cmd_bias, bol_volt, fnyq_icm, otf, Tbol,
+                apod, gain=1, sweeps=1, nui=None, cutoff=None, bol_params=None):
     """
     Inputs are the same as spec_to_ifg, except for the ifg argument, which is the interferogram to be converted.
 
@@ -155,9 +140,8 @@ def ifg_to_spec(
     spec = spec / etf
     spec = spec / spec_norm
 
-    B = bolometer.get_bolometer_response_function(
-        channel, mode, bol_cmd_bias, bol_volt, Tbol, nui=nui, tau_scale=tau_scale
-    )
+    B = bolometer.get_bolometer_response_function(channel, mode, bol_cmd_bias, bol_volt, Tbol,
+                                                  nui=nui, parameters=bol_params)
     if nui is None:
         # B is (nifg, nfreq), one column per frequency
         spec = spec / B
@@ -206,7 +190,7 @@ def spec_to_ifg(
     otf,
     apod,
     fnyq_icm,
-    tau_scale=1.0,
+    bol_params=None,
 ):
     """
     Converts spectrum to interferogram using the pipeline's etf and otf. Expects the spectrum to be in units of MJy/sr.
@@ -298,7 +282,8 @@ def spec_to_ifg(
         print(f"spec_to_ifg: Warning, {printed_nans} NaNs in spec_r")
 
     B = bolometer.get_bolometer_response_function(
-        channel, mode, bol_cmd_bias, bol_volt, Tbol, tau_scale=tau_scale
+        channel, mode, bol_cmd_bias, bol_volt, Tbol,
+        parameters=bol_params
     )
     spec_r = spec_r * B
 

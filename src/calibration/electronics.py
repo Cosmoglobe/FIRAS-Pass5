@@ -8,7 +8,8 @@ from utils import frd, fut
 
 def etfunction(channel, adds_per_group, samprate, nui=None):
     """
-    This function is adapted from Nathan Miller's python FIRAS pipeline in order to generate the corresponding electronics transfer function, according to:
+    This function is adapted from Nathan Miller's python FIRAS pipeline in order to generate the
+    corresponding electronics transfer function, according to:
 
     Parameters
     ----------
@@ -80,7 +81,8 @@ def compute_etf_per_freq(freqhz, channel, samprate, adds_per_group):
 
 def _digfltr(freqhz, ichan, samplrate):
     """
-    Adapted from Nathan's function, removing the micromode parameter since for our data all micromode = 0.
+    Adapted from Nathan's function, removing the micromode parameter since for our data all
+    micromode = 0.
     """
     zi = -2j * np.pi
     z = np.exp(zi * freqhz / samplrate)
@@ -115,14 +117,8 @@ def _bessel(fhz, bes3db):
     zfb4 = zfb * zfb3
     zfb5 = zfb * zfb4
 
-    zbesl = 1.0 / (
-        1.0
-        + 2.4275 * zfb
-        + 2.6189 * zfb2
-        + 1.5894 * zfb3
-        + 0.5511 * zfb4
-        + 0.0892 * zfb5
-    )
+    zbesl = 1.0 / (1.0 + 2.4275 * zfb + 2.6189 * zfb2 + 1.5894 * zfb3 + 0.5511 * zfb4 
+                   + 0.0892 * zfb5)
 
     return zbesl
 
@@ -152,17 +148,8 @@ if __name__ == "__main__":
     fits_etf = fits_data["RELEX_GA"][0] + 1j * fits_data["IELEX_GA"][0]
     print(fits_etf)
 
-    plt.plot(
-        np.arange(5, 5 + fits_etf.real.size),
-        fits_etf.real,
-        color="black",
-    )
-    plt.plot(
-        np.arange(5, 5 + fits_etf.imag.size),
-        fits_etf.imag,
-        color="black",
-        linestyle="--",
-    )
+    plt.plot(np.arange(5, 5 + fits_etf.real.size), fits_etf.real, color="black")
+    plt.plot(np.arange(5, 5 + fits_etf.imag.size), fits_etf.imag, color="black", linestyle="--")
 
     # compare with etf from pipeline
     etfs = frd.elex_transfcnl(samprate=681.43, nfreq=257)
