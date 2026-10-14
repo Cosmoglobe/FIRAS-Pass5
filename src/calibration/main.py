@@ -51,6 +51,7 @@ channels = {"ll": 3}
 # building arrays for everything so that it is easier to know where they are fit
 gain = np.empty((4, nifgs))
 sweeps = np.empty((4, nifgs))
+adds_per_group = np.empty((4, nifgs))
 
 # our first guesses
 # dgain needs to be fit one per gain value
@@ -62,7 +63,11 @@ for i in range(1, 8):
 for channel, c in channels.items():
     gain[c] = data[f"gain_{channel}"]
     sweeps[c] = data[f"sweeps_{channel}"]
+    adds_per_group[c] = data[f"adds_per_group_{channel}"]
+
+    mtm_length = data[f"mtm_length_{channel}"]
+    mtm_speed = data[f"mtm_speed_{channel}"]
 
     # iterate over all of the observation
     for o in range(len(gain)):
-        sim = data_model(gain[c, o], dgain[c], sweeps[o])
+        sim = data_model(gain[c, o], dgain[c], sweeps[o], channel, adds_per_group[c], mode)
