@@ -1,7 +1,8 @@
 """
 This is meant as the "main" calibration script, where we iterate over all of the different things
 that need fitting for the calibration data. These will also need to be fit for the sky data, but 
-that will be later.
+that will be later. The data model is given by (more in detail in each of the scripts):
+d = G * ΔG * N_sweeps * F[E_f * B_f * (S_k,XCAL * a_f,XCAL * e^(-ifφ) + sum_k a_f,k P_f(T_k + ΔT_k) + H_f + G_f)] + n
 
 There are three main "things" that need to be fit.
 - The emissivities. These need to be fit per detector and per mode. There is one emissivity curve
@@ -26,4 +27,8 @@ ADDITIVE:
 - 5 vibration parameters, Δ1, Δ2, q, ɑ, β, based on the published model.
 These need to be fit for the whole mission per mode.
 - 2 harmonic amplitudes, ε1, ε2. These need to be fit for the whole mission per mode.
+
+The exact equations for each etc are in their own scripts.
 """
+
+# first we start with fitting the emissivities
