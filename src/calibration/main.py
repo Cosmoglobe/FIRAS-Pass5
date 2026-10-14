@@ -35,6 +35,7 @@ The exact equations for each etc are in their own scripts.
 import numpy as np
 import globals as g
 from calibration.helper_functions import data_model
+from astropy.io import fits
 
 # let's first set up the first guesses for each, starting with first loading the data to compare to
 # and then the emissitivities
@@ -53,8 +54,10 @@ sweeps = np.empty((4, nifgs))
 
 # our first guesses
 # dgain needs to be fit one per gain value
-ngain = len(np.unique(data["gain_ll"]))
-dgain = np.ones(ngain)
+dgain = np.loadtxt("../reference/fex_cmdgain.txt", skiprows=22).T
+nominal_gain = [1, 3, 10, 30, 100, 300, 1000, 3000]
+for i in range(1, 8):
+    dgain[:,i] = dgain[:,i] / nominal_gain[i]  # normalize to the nominal gain values
 
 for channel, c in channels.items():
     gain[c] = data[f"gain_{channel}"]
@@ -62,4 +65,4 @@ for channel, c in channels.items():
 
     # iterate over all of the observation
     for o in range(len(gain)):
-        sim = data_model(gain[o], dgain, sweeps[o])
+        sim = data_model(gain[c, o], dgain[c], sweeps[o])

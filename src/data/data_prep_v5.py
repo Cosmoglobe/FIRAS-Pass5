@@ -495,9 +495,7 @@ for channel, channel_i in g.CHANNELS.items():
     mtm_speed_mismatch_cal = (eng_mtm_speed[idx0_cal] != eng_mtm_speed[idx1_cal]) | (
         eng_mtm_speed[idx0_cal] != cal_data[f"mtm_speed_{channel}"]
     )
-    gain_mismatch_cal = (eng_gain[idx0_cal] != eng_gain[idx1_cal]) | (
-        eng_gain[idx0_cal] == 0
-    )
+    gain_mismatch_cal = (eng_gain[idx0_cal] != eng_gain[idx1_cal]) | (eng_gain[idx0_cal] == 0)
     cal_data[f"gain_{channel}"] = np.where(~gain_mismatch_cal, eng_gain[idx0_cal], np.nan)
 
     # use the cal_cuts in the new stuff added to cal data
@@ -524,17 +522,9 @@ for channel, channel_i in g.CHANNELS.items():
         cal_data[f"{key}_{channel}"] = np.where(~mismatch, stat_array[idx0_cal], np.nan)
         sw_mismatches_cal |= mismatch
     
-    other_cuts_cal = ~(
-        bol_cmd_bias_mismatch_cal
-        | upmode_mismatch_cal
-        | fakeit_mismatch_cal
-        | adds_per_group_mismatch_cal
-        | sweeps_mismatch_cal
-        | mtm_length_mismatch_cal
-        | mtm_speed_mismatch_cal
-        | gain_mismatch_cal
-        | sw_mismatches_cal
-    )
+    other_cuts_cal = ~(bol_cmd_bias_mismatch_cal | upmode_mismatch_cal | fakeit_mismatch_cal | 
+                       adds_per_group_mismatch_cal | sweeps_mismatch_cal | mtm_length_mismatch_cal |
+                       mtm_speed_mismatch_cal | gain_mismatch_cal | sw_mismatches_cal)
     for key in cal_data:
         if key.endswith(f"_{channel}"):
             cal_data[key] = cal_data[key][other_cuts_cal]
@@ -587,11 +577,11 @@ for channel, channel_i in g.CHANNELS.items():
     # bad_gain = (sky_data["gain"] == np.nan) != (eng_gain[idx0] == eng_gain[idx1]) | (
     #     eng_gain[idx0] != sky_data["gain"]
     # )
-    gain_mismatch = (eng_gain[idx0_sky] != eng_gain[idx1_sky]) | (
-        eng_gain[idx0_sky] == 0
-    )
+    gain_mismatch = (eng_gain[idx0_sky] != eng_gain[idx1_sky]) | (eng_gain[idx0_sky] == 0)
     print(f"    Gain Mismatch: {gain_mismatch.sum()}")
     sky_data[f"gain_{channel}"] = np.where(~gain_mismatch, eng_gain[idx0_sky], np.nan)
+
+    # use actual gain values
 
     moon_contamination = sky_data[f"moon_angle_{channel}"] <= 22.0
     print(f"    Moon Angle <= 22.0: {moon_contamination.sum()}")
@@ -604,18 +594,9 @@ for channel, channel_i in g.CHANNELS.items():
         sw_mismatches |= mismatch
     print(f"    Status Word Mismatches: {sw_mismatches.sum()}")
 
-    other_cuts = ~(
-        bol_cmd_bias_mismatch
-        | upmode_mismatch
-        | fakeit_mismatch
-        | adds_per_group_mismatch
-        | sweeps_mismatch
-        | mtm_length_mismatch
-        | mtm_speed_mismatch
-        | gain_mismatch
-        | moon_contamination
-        | sw_mismatches
-    )
+    other_cuts = ~(bol_cmd_bias_mismatch | upmode_mismatch | fakeit_mismatch | 
+                   adds_per_group_mismatch | sweeps_mismatch | mtm_length_mismatch | 
+                   mtm_speed_mismatch | gain_mismatch | moon_contamination | sw_mismatches)
     print(f"    Total Sky Records Failed Other Cuts: {(~other_cuts).sum()}")
     print(f"    Remaining Sky Records: {other_cuts.sum()}")
     for key in sky_data:
