@@ -51,6 +51,10 @@ if args.suffix != "":
 else:
     suffix = ""
 
+
+user = os.environ["USER"]
+
+
 # suffix = "_otf_3rddeg_ical_2nddeg"
 
 fnyq = gen_nyquistl("../reference/fex_samprate.txt", "../reference/fex_nyquist.txt", "int")
@@ -453,7 +457,7 @@ for channel in g.CHANNELS:
             fig.tight_layout(rect=[0, 0, 1, 0.88])
             plt.savefig(f"{out_dir}/{n}_{tag}{suffix}.png", bbox_inches="tight")
             if tag == "04_ifg_residuals":
-                plt.savefig("/mn/stornext/d5/data/aimartin/firas-reanalysis/FIRAS-Pass5/src/"
+                plt.savefig(f"/mn/stornext/d5/data/{user}/firas-reanalysis/FIRAS-Pass5/src/"
                             f"calibration/output/llss_checks/{n}.png")
             plt.close()
 
