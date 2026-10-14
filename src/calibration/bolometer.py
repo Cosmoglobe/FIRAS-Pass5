@@ -115,3 +115,9 @@ def get_bolometer_response_function(channel, mode, bol_cmd_bias, bol_volt, Tbol,
         omega = omega[np.newaxis, :]
     B = S0 / (1 + 1j * omega * tau)
     return B
+
+if __name__ == "__main__":
+    params = get_bolometer_parameters("ll", "lf")
+    arr = ["R0", "T0", "G1", "beta", "rho", "C1", "C3", "Jo", "Jg"]
+    for i in range(len(params)):
+        print(f"{arr[i]} = {params[i]}")

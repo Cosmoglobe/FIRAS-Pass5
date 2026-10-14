@@ -107,7 +107,7 @@ def fit_channel_mode(channel="ll", mode="ss", output_dir="calibration/output"):
                 data[f"bol_cmd_bias_{channel}"][mode_filter],
                 data[f"bol_volt_{channel}"][mode_filter], temps,
                 data[f"adds_per_group_{channel}"][mode_filter],
-                gen_nyquistl("reference/fex_samprate.txt", "reference/fex_nyquist.txt", "int")
+                gen_nyquistl("../reference/fex_samprate.txt", "../reference/fex_nyquist.txt", "int")
                 ["icm"][4 * (g.CHANNELS[channel] % 2) + g.MODES[mode]],
                 utils.generate_frequencies(channel, mode, g.SPEC_SIZE))
     published = load_published_parameters(channel, mode)
