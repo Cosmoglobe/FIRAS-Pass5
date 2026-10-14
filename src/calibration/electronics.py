@@ -6,7 +6,7 @@ import globals as g
 from utils import frd, fut
 
 
-def etfunction(channel, adds_per_group, samprate, nui=None):
+def etfunction(channel, adds_per_group, samprate=681.43, nui=None):
     """
     This function is adapted from Nathan Miller's python FIRAS pipeline in order to generate the
     corresponding electronics transfer function, according to:

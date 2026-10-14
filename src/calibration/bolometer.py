@@ -85,7 +85,7 @@ def calculate_time_constant(C3, Tbol, C1, G1, beta, bol_volt, Jo, Jg, bol_cmd_bi
     return tau
 
 
-def get_bolometer_response_function(channel, mode, bol_cmd_bias, bol_volt, Tbol, nui=None,
+def btfunction(channel, mode, bol_cmd_bias, bol_volt, Tbol, nui=None,
                                     parameters=None):
     """
     S0 / (1 + i w tau), the bolometer response.

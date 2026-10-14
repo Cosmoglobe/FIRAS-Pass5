@@ -31,4 +31,35 @@ These need to be fit for the whole mission per mode.
 The exact equations for each etc are in their own scripts.
 """
 
-# first we start with fitting the emissivities
+# libraries
+import numpy as np
+import globals as g
+from calibration.helper_functions import data_model
+
+# let's first set up the first guesses for each, starting with first loading the data to compare to
+# and then the emissitivities
+
+# this data already contains the "corrected" thermometers and has removed most of the bad data
+data = np.load(f"{g.PREPROCESSED_DATA_PATH}cal.npz")
+nifgs = len(data["ifg_ll"]) # per channel
+
+# TODO: put this back to all channels
+# channels = {"rh": 0, "rl": 1, "lh": 2, "ll": 3}
+channels = {"ll": 3}
+
+# building arrays for everything so that it is easier to know where they are fit
+gain = np.empty((4, nifgs))
+sweeps = np.empty((4, nifgs))
+
+# our first guesses
+# dgain needs to be fit one per gain value
+ngain = len(np.unique(data["gain_ll"]))
+dgain = np.ones(ngain)
+
+for channel, c in channels.items():
+    gain[c] = data[f"gain_{channel}"]
+    sweeps[c] = data[f"sweeps_{channel}"]
+
+    # iterate over all of the observation
+    for o in range(len(gain)):
+        sim = data_model(gain[o], dgain, sweeps[o])

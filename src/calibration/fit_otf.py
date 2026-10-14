@@ -418,7 +418,7 @@ def apply_tau_scale(fit, alpha):
 
 def bolometer_response(channel, mode, fields, Tbol, parameters):
     """Response on the complete spectral grid for explicit physical parameters."""
-    return bolometer.get_bolometer_response_function(
+    return bolometer.btfunction(
         channel, mode, fields["bol_cmd_bias"], fields["bol_volt"], Tbol,
         parameters=parameters,
     )

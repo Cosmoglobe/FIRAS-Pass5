@@ -140,7 +140,7 @@ def ifg_to_spec(ifg, channel, mode, adds_per_group, bol_cmd_bias, bol_volt, fnyq
     spec = spec / etf
     spec = spec / spec_norm
 
-    B = bolometer.get_bolometer_response_function(channel, mode, bol_cmd_bias, bol_volt, Tbol,
+    B = bolometer.btfunction(channel, mode, bol_cmd_bias, bol_volt, Tbol,
                                                   nui=nui, parameters=bol_params)
     if nui is None:
         # B is (nifg, nfreq), one column per frequency
@@ -281,7 +281,7 @@ def spec_to_ifg(
     if printed_nans > 0:
         print(f"spec_to_ifg: Warning, {printed_nans} NaNs in spec_r")
 
-    B = bolometer.get_bolometer_response_function(
+    B = bolometer.btfunction(
         channel, mode, bol_cmd_bias, bol_volt, Tbol,
         parameters=bol_params
     )
