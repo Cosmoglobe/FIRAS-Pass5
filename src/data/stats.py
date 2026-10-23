@@ -34,9 +34,8 @@ def table3_4(xcal_pos, mtm_length, mtm_speed):
     ls = (mtm_length == 1) & (mtm_speed == 0)
     lf = (mtm_length == 1) & (mtm_speed == 1)
     print("\nTable 3.4")
-    print(
-        f"    SS: {ss.sum()/len(mtm_length)*100:.1f}, SF: {sf.sum()/len(mtm_length)*100:.1f}, LS: {ls.sum()/len(mtm_length)*100:.1f}, LF: {lf.sum()/len(mtm_length)*100:.1f}"
-    )
+    print(f"    SS: {ss.sum()/len(mtm_length)*100:.1f}, SF: {sf.sum()/len(mtm_length)*100:.1f}, LS:"
+          f" {ls.sum()/len(mtm_length)*100:.1f}, LF: {lf.sum()/len(mtm_length)*100:.1f}")
 
 
 def table4_1(data_quality, fake, xcal_pos):

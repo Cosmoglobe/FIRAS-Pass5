@@ -68,6 +68,6 @@ for channel, c in channels.items():
     mtm_length = data[f"mtm_length_{channel}"]
     mtm_speed = data[f"mtm_speed_{channel}"]
 
-    # iterate over all of the observation
+    # iterate over all of the observations
     for o in range(len(gain)):
         sim = data_model(gain[c, o], dgain[c], sweeps[o], channel, adds_per_group[c], mode)

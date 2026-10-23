@@ -334,35 +334,49 @@ for channel, channel_i in g.CHANNELS.items():
                     fig_ax_pairs[i//xsize[element]][1].set_title(f"Debiased High Current Temperatures for {element.upper()} - RH")
                     fig_ax_pairs[i//xsize[element]][1].legend()
 
-                    color = "C0" if side == "a" else "C2"
-                    fig_ax_pairs_2[i//xsize[element]][1].plot(midpoint_time_s[channel][i:i+xsize[element]],
-                                                    temps[f"{side}_{element}_{channel}"][i:i+xsize[element]],
-                                                    label=f"{side}_combined", color=color)
+                    if side == "a":
+                        color = g.COLORS[sides.index(side) * 2]
+                    else:
+                        color = g.COLORS[sides.index(side) * 2 + 1]
+
+                    if element == "xcal_cone":
+                        plot_time = midpoint_time_s[channel][i:i+xsize[element]][cal_mask[channel][
+                            i:i+xsize[element]]]
+                    else:
+                        plot_time = midpoint_time_s[channel][i:i+xsize[element]]
+                    fig_ax_pairs_2[i//xsize[element]][1].plot(
+                        plot_time,
+                        temps[f"{side}_{element}_{channel}"][i:i+xsize[element]],
+                        label=f"{side.upper()} - High and low current combined", color=color)
                     fig_ax_pairs_2[i//xsize[element]][1].set_xlabel("Time")
                     fig_ax_pairs_2[i//xsize[element]][1].set_ylabel("Temperature (K)")
-                    fig_ax_pairs_2[i//xsize[element]][1].set_title(f"High/Low Current Combined Temperatures for {element.upper()} - RH")
+                    fig_ax_pairs_2[i//xsize[element]][1].set_title(
+                        f"High/Low Current Combined Temperatures for {element.upper()} - RH")
                     fig_ax_pairs_2[i//xsize[element]][1].legend()
 
                     chunk = temps[f"{side}_{element}_{channel}"][i:i+xsize[element]]
                     if chunk.size > 0:
                         valid = chunk[np.isfinite(chunk)]
                         if valid.size > 0:
-                            y_lim[i//xsize[element]][0] = min(y_lim[i//xsize[element]][0], np.min(valid))
-                            y_lim[i//xsize[element]][1] = max(y_lim[i//xsize[element]][1], np.max(valid))
+                            y_lim[i//xsize[element]][0] = min(y_lim[i//xsize[element]][0],
+                                                              np.min(valid))
+                            y_lim[i//xsize[element]][1] = max(y_lim[i//xsize[element]][1],
+                                                              np.max(valid))
 
         if channel == "rh" and g.VERBOSE == -1 and (element == "ical" or element == "xcal_cone"):
             for i in range(0, len(lo_plot[f"{side}_{element}_{channel}"]), xsize[element]):
-                fig_ax_pairs[i//xsize[element]][0].savefig(f"../output/plots/thermometers/03_debiased/{element}_{i}.png")
+                fig_ax_pairs[i//xsize[element]][0].savefig(
+                    f"../output/plots/thermometers/03_debiased/{element}_{i}.png")
                 plt.close(fig_ax_pairs[i//xsize[element]][0])
 
-                fig_ax_pairs_2[i//xsize[element]][0].savefig(f"{g.SAVE_PATH}/plots/thermometers/04_combined/{element}_{i}.png")    
+                fig_ax_pairs_2[i//xsize[element]][0].savefig(
+                    f"{g.SAVE_PATH}/plots/thermometers/04_combined/{element}_{i}.png")    
                 plt.close(fig_ax_pairs_2[i//xsize[element]][0])
 
-        # weight each side by its standard deviation to get a final temperature estimate for each element
-        all_data[f"{element}_{channel}"] = stats.weighted_average(temps[f"a_{element}_{channel}"],
-                                                                  temps[f"b_{element}_{channel}"],
-                                                                  std_weight[f"a_{element}_{channel}"],
-                                                                  std_weight[f"b_{element}_{channel}"])
+        # average the two sides
+        # TODO: maybe we keep both sides and fit the weights?
+        all_data[f"{element}_{channel}"] = (temps[f"a_{element}_{channel}"] +
+                                            temps[f"b_{element}_{channel}"]) / 2
         
         if g.VERBOSE == -1 and (element == "ical" or element == "xcal_cone") and channel == "rh":
             for i in range(0, len(all_data[f"{element}_{channel}"]), xsize[element]):
@@ -370,11 +384,12 @@ for channel, channel_i in g.CHANNELS.items():
                     continue
                 fig, ax = plt.subplots(figsize=(10, 6))
                 ax.plot(midpoint_time_s[channel][i:i+xsize[element]],
-                        all_data[f"{element}_{channel}"][i:i+xsize[element]])
+                        all_data[f"{element}_{channel}"][i:i+xsize[element]], color=g.COLORS[0])
                 ax.set_xlabel("Time")
                 ax.set_ylabel("Temperature (K)")
                 ax.set_title(f"Final Combined Temperatures for {element.upper()} - RH")
-                if np.isfinite(y_lim[i//xsize[element]][0]) and np.isfinite(y_lim[i//xsize[element]][1]):
+                if np.isfinite(
+                    y_lim[i//xsize[element]][0]) and np.isfinite(y_lim[i//xsize[element]][1]):
                     ax.set_ylim(y_lim[i//xsize[element]])
                 plt.savefig(f"{g.SAVE_PATH}/plots/thermometers/05_final_combined/{element}_{i}.png")
                 plt.close(fig)
@@ -391,10 +406,7 @@ for channel, channel_i in g.CHANNELS.items():
     temps["b_lo_dihedral"] = interpolators["b_lo_dihedral"](midpoint_time_s[channel])
     std_weight["a_lo_dihedral"] = stats.estimate_noise(temps["a_lo_dihedral"], "dihedral")
     std_weight["b_lo_dihedral"] = stats.estimate_noise(temps["b_lo_dihedral"], "dihedral")
-    all_data[f"dihedral_{channel}"] = stats.weighted_average(temps["a_lo_dihedral"],
-                                                             temps["b_lo_dihedral"],
-                                                             std_weight["a_lo_dihedral"],
-                                                             std_weight["b_lo_dihedral"])
+    all_data[f"dihedral_{channel}"] = (temps["a_lo_dihedral"] + temps["b_lo_dihedral"]) / 2
 
     # TODO: finish the weights of the sides down here
     temps["a_lo_collimator"] = interpolators["a_lo_collimator"](midpoint_time_s[channel])
@@ -405,10 +417,7 @@ for channel, channel_i in g.CHANNELS.items():
     std_weight["a_lo_mirror"] = stats.estimate_noise(temps["a_lo_mirror"], "mirror")
     std_weight["b_lo_mirror"] = stats.estimate_noise(temps["b_lo_mirror"], "mirror")
     
-    all_data[f"mirror_{channel}"] = stats.weighted_average(temps[f"a_lo_mirror"],
-                                                            temps[f"b_lo_mirror"],
-                                                            std_weight[f"a_lo_mirror"],
-                                                            std_weight[f"b_lo_mirror"])
+    all_data[f"mirror_{channel}"] = (temps["a_lo_mirror"] + temps["b_lo_mirror"]) / 2
 
     for element in ["dihedral", "collimator", "mirror"]:
         cal_data[f"{element}_{channel}"] = all_data[f"{element}_{channel}"][cal_mask[channel]]
