@@ -7,14 +7,14 @@ set -e
 # python -m pipeline.plot_map
 # python -m pipeline.firas_curve
 
-save_path="/mn/stornext/d16/www_cmb/$user/firas/"
+save_path="/mn/stornext/d16/www_cmb/$USER/firas/"
 mkdir -p $save_path
 cd $save_path
 mkdir -p "maps/frequency_maps"
 cd "maps/frequency_maps/"
 
-channels="ll"
-modes="lf"
+channels="rh"
+modes="ss"
 for channel in $channels; do
     for mode in $modes; do
         mkdir -p "${channel}_${mode}/galactic/"

@@ -93,7 +93,6 @@ for mode in g.MODES_PLOT:
         tf = minimize(utils.residuals, t0, args=(f_ghz, bb_curve_data)).x[0]
         print(f"BB temperature according to {channel.upper()}{mode.upper()} average temperature after fitting per pixel and fitting after averaging over sky: {bb_temp:.5f} K and {tf:.5f} K")
         
-        os.remove(f"{g.SAVE_PATH}/plots/bb_curve/{channel}_{mode}.png")
         fig2 = plt.figure(2)
         plt.plot(f_ghz, utils.planck(f_ghz, bb_temp),
                  label=f"Averaged after fitting: {bb_temp:.5f} K")
@@ -111,7 +110,6 @@ for mode in g.MODES_PLOT:
         print(f"Saved BB curve for {channel.upper()}{mode.upper()} to {g.SAVE_PATH}plots/bb_curve/{channel}_{mode}.png")
 
         # plot also subtracted
-        os.remove(f"{g.SAVE_PATH}/plots/bb_curve/{channel}_{mode}_difference.png")
         fig3 = plt.figure(3)
         difference = bb_curve_data - utils.planck(f_ghz, t0)
         plt.plot(f_ghz, difference, label="Difference")

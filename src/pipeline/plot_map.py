@@ -107,11 +107,8 @@ for channel in g.CHANNELS_PLOT:
                 )
                 plt.close()
             if g.FITS:
-                fits.writeto(
-                    f"{curr_path}{channel}_{mode}_nside{g.NSIDE}.fits",
-                    data_density[f"{channel}_{mode}"],
-                    overwrite=True,
-                )
+                fits.writeto(f"{curr_path}{channel}_{mode}_nside{g.NSIDE}.fits",
+                             data_density[f"{channel}_{mode}"], overwrite=True)
 
             m = np.zeros((g.NPIX, len(f_ghz[f"{channel}_{mode}"])))
             monopole = utils.planck(f_ghz[f"{channel}_{mode}"], np.array(g.T_CMB))
@@ -131,26 +128,22 @@ for channel in g.CHANNELS_PLOT:
                     max_amp = 200
                     # if channel == "ll" and mode == "ss":
                     #     max_amp = 25
-                    cg.plot(
-                        m[:, freq],
-                        title=f"{int(f_ghz[f'{channel}_{mode}'][freq]):04d} GHz as seen by {channel.upper()}{mode.upper()}",
-                        unit="MJy/sr",
-                        min=0,
-                        max=max_amp,
-                        comp="freqmap",
-                        freq=int(f_ghz[f"{channel}_{mode}"][freq]) * u.GHz,
-                        cmap='planck'
-                    )
+                    cg.plot(m[:, freq], title=f"{int(f_ghz[f'{channel}_{mode}'][freq]):04d} GHz as "
+                            f"seen by {channel.upper()}{mode.upper()}", unit="MJy/sr", min=0,
+                            max=max_amp, comp="freqmap",
+                            freq=int(f_ghz[f"{channel}_{mode}"][freq]) * u.GHz, cmap='planck')
                     plt.savefig(
-                        f"{g.SAVE_PATH}maps/frequency_maps/{channel}_{mode}/{folder}/{int(f_ghz[f'{channel}_{mode}'][freq]):04d}_nside{g.NSIDE}.png", bbox_inches="tight"
-                    )
+                        f"{g.SAVE_PATH}maps/frequency_maps/{channel}_{mode}/{folder}/"
+                        f"{int(f_ghz[f'{channel}_{mode}'][freq]):04d}_nside{g.NSIDE}.png",
+                        bbox_inches="tight")
                     plt.close()
                 if g.FITS:
-                    fits.writeto(
-                        f"{g.FITS_PATH}maps/frequency_maps/{channel}_{mode}/galactic/{int(f_ghz[f'{channel}_{mode}'][freq]):04d}_nside{g.NSIDE}.fits",
-                        m[:, freq],
-                        overwrite=True,
-                    )
+                    if not os.path.exists(f"{g.FITS_PATH}maps/frequency_maps/{channel}_{mode}/"
+                                          "galactic/"):
+                        os.makedirs(f"{g.FITS_PATH}maps/frequency_maps/{channel}_{mode}/galactic/")
+                    fits.writeto(f"{g.FITS_PATH}maps/frequency_maps/{channel}_{mode}/galactic/"
+                                 f"{int(f_ghz[f'{channel}_{mode}'][freq]):04d}_nside{g.NSIDE}.fits",
+                                 m[:, freq], overwrite=True)
 
             if g.SCANUPDOWN:
                 print("Plotting up/down scan map")
@@ -164,51 +157,37 @@ for channel in g.CHANNELS_PLOT:
                 monopole = utils.planck(f_ghz[f"{channel}_{mode}"], np.array(g.T_CMB))
                 mask_up = data_density_up == 0
                 mask_down = data_density_down == 0
-                m_up[~mask_up] = (
-                    hpxmap_up[~mask_up] / data_density_up[~mask_up, np.newaxis]
-                ) - monopole
-                m_down[~mask_down] = (
-                    hpxmap_down[~mask_down] / data_density_down[~mask_down, np.newaxis]
-                ) - monopole
+                m_up[~mask_up] = ((hpxmap_up[~mask_up] / data_density_up[~mask_up, np.newaxis]) - 
+                                  monopole)
+                m_down[~mask_down] = (hpxmap_down[~mask_down] / 
+                                      data_density_down[~mask_down, np.newaxis]) - monopole
                 m_up[mask_up] = np.nan
                 m_down[mask_down] = np.nan
 
                 for freq in range(len(f_ghz[f"{channel}_{mode}"])):
                     if g.PNG:
-                        hp.mollview(
-                            m_up[:, freq],
-                            title=f"{int(f_ghz[f'{channel}_{mode}'][freq]):04d} GHz as seen by {channel.upper()}{mode.upper()} in up scan",
-                            unit="MJy/sr",
-                            min=0,
-                            max=200,
-                        )
-                        plt.savefig(
-                            f"{g.SAVE_PATH}maps/up_down_scan/{channel}_{mode}/{folder}/{int(f_ghz[f'{channel}_{mode}'][freq]):04d}_up_nside{g.NSIDE}.png"
-                        )
+                        hp.mollview(m_up[:, freq],
+                                    title=f"{int(f_ghz[f'{channel}_{mode}'][freq]):04d} GHz as seen"
+                                    f" by {channel.upper()}{mode.upper()} in up scan",
+                                    unit="MJy/sr", min=0, max=200)
+                        plt.savefig(f"{g.SAVE_PATH}maps/up_down_scan/{channel}_{mode}/{folder}/"
+                                    f"{int(f_ghz[f'{channel}_{mode}'][freq]):04d}_up_nside{g.NSIDE}"
+                                    ".png")
                         plt.close()
 
-                        hp.mollview(
-                            m_down[:, freq],
-                            title=f"{int(f_ghz[f'{channel}_{mode}'][freq]):04d} GHz as seen by {channel.upper()}{mode.upper()} in down scan",
-                            unit="MJy/sr",
-                            min=0,
-                            max=200,
-                        )
-                        plt.savefig(
-                            f"{g.SAVE_PATH}maps/up_down_scan/{f'{channel}_{mode}'}/{folder}/{int(f_ghz[f'{channel}_{mode}'][freq]):04d}_down_nside{g.NSIDE}.png"
-                        )
+                        hp.mollview(m_down[:, freq],
+                                    title=f"{int(f_ghz[f'{channel}_{mode}'][freq]):04d} GHz as seen"
+                                    f" by {channel.upper()}{mode.upper()} in down scan",
+                                    unit="MJy/sr", min=0, max=200)
+                        plt.savefig(f"{g.SAVE_PATH}maps/up_down_scan/{f'{channel}_{mode}'}/"
+                                    f"{folder}/{int(f_ghz[f'{channel}_{mode}'][freq]):04d}_down_"
+                                    f"nside{g.NSIDE}.png")
                         plt.close()
                     if g.FITS:
-                        fits.writeto(
-                            f"{curr_path}{int(f_ghz[f'{channel}_{mode}'][freq]):04d}_up_nside{g.NSIDE}.fits",
-                            m_up[:, freq],
-                            overwrite=True,
-                        )
-                        fits.writeto(
-                            f"{curr_path}{int(f_ghz[f'{channel}_{mode}'][freq]):04d}_down_nside{g.NSIDE}.fits",
-                            m_down[:, freq],
-                            overwrite=True,
-                        )
+                        fits.writeto(f"{curr_path}{int(f_ghz[f'{channel}_{mode}'][freq]):04d}_up_"
+                                     f"nside{g.NSIDE}.fits", m_up[:, freq], overwrite=True)
+                        fits.writeto(f"{curr_path}{int(f_ghz[f'{channel}_{mode}'][freq]):04d}_down_"
+                                     f"nside{g.NSIDE}.fits", m_down[:, freq], overwrite=True)
 
 if g.JOINT:
     print("Plotting joint map")
@@ -216,46 +195,28 @@ if g.JOINT:
     joint_map = hpxmap["ll_lf"] + hpxmap["rl_lf"]
     joint_density = data_density["ll_lf"] + data_density["rl_lf"]
     for i in range(len(f_ghz["ll_ss"])):
-        joint_map[:, i + 3 * i] += (
-            hpxmap["ll_ss"][:, i]
-            + hpxmap["rl_ss"][:, i]
-            + hpxmap["lh_ss"][:, i]
-            + hpxmap["rh_ss"][:, i]
-        )
-        joint_density += (
-            data_density["ll_ss"]
-            + data_density["rl_ss"]
-            + data_density["lh_ss"]
-            + data_density["rh_ss"]
-        )
+        joint_map[:, i + 3 * i] += (hpxmap["ll_ss"][:, i] + hpxmap["rl_ss"][:, i] +
+                                    hpxmap["lh_ss"][:, i] + hpxmap["rh_ss"][:, i])
+        joint_density += (data_density["ll_ss"] + data_density["rl_ss"] + data_density["lh_ss"] +
+                          data_density["rh_ss"])
 
     m_joint = np.zeros((g.NPIX, len(f_ghz["ll_lf"])))
     monopole = utils.planck(f_ghz["ll_lf"], np.array(g.T_CMB))
     joint_mask = joint_density == 0
-    m_joint[~joint_mask] = (
-        joint_map[~joint_mask] / joint_density[~joint_mask, np.newaxis] - monopole
-    )
+    m_joint[~joint_mask] = (joint_map[~joint_mask] / joint_density[~joint_mask, np.newaxis] -
+                            monopole)
     m_joint[joint_mask] = np.nan  # hp.UNSEEN
 
     for freq in range(len(f_ghz["ll_lf"])):
         if g.PNG:
-            hp.mollview(
-                m_joint[:, freq],
-                title=f"{int(f_ghz['ll_lf'][freq]):04d} GHz",
-                unit="MJy/sr",
-                min=0,
-                max=200,
-            )
-            plt.savefig(
-                f"{g.SAVE_PATH}maps/joint/{folder}/{int(f_ghz['ll_lf'][freq]):04d}_nside{g.NSIDE}.png"
-            )
+            hp.mollview(m_joint[:, freq], title=f"{int(f_ghz['ll_lf'][freq]):04d} GHz",
+                        unit="MJy/sr", min=0, max=200)
+            plt.savefig(f"{g.SAVE_PATH}maps/joint/{folder}/{int(f_ghz['ll_lf'][freq]):04d}_"
+                        f"nside{g.NSIDE}.png")
             plt.close()
         if g.FITS:
-            fits.writeto(
-                f"{curr_path}{int(f_ghz['ll_lf'][freq]):04d}_nside{g.NSIDE}.fits",
-                m_joint[:, freq],
-                overwrite=True,
-            )
+            fits.writeto(f"{curr_path}{int(f_ghz['ll_lf'][freq]):04d}_nside{g.NSIDE}.fits",
+                         m_joint[:, freq], overwrite=True)
 
     # high frequencies
     joint_map = hpxmap["lh_ss"] + hpxmap["rh_ss"]
@@ -264,9 +225,8 @@ if g.JOINT:
     monopole = utils.planck(f_ghz["lh_ss"], np.array(g.T_CMB))[len(f_ghz["ll_ss"]) :]
     joint_mask = joint_density == 0
 
-    m_joint[~joint_mask] = (
-        joint_map[~joint_mask] / joint_density[~joint_mask, np.newaxis]
-    )[:, len(f_ghz["ll_ss"]) :] - monopole
+    m_joint[~joint_mask] = ((joint_map[~joint_mask] / joint_density[~joint_mask, np.newaxis])
+                            [:, len(f_ghz["ll_ss"]) :] - monopole)
     m_joint[joint_mask] = np.nan  # hp.UNSEEN
 
     curr_path = f"{g.FITS_PATH}maps/joint/{folder}/"
